@@ -51,12 +51,10 @@ import type {
   ArbitraryPlane,
   AssemblyJoint,
   CAMSetup,
-  CoupledConstraintType,
   EdgeTreatment,
   MaterialPresetId,
   MeshData,
   ModelSnapshot,
-  NonLinearConstraint,
   Part,
   Primitive,
   SectionAnalysisState,
@@ -68,7 +66,6 @@ import type {
   SketchStage,
   SketchTool,
   SolidCommand,
-  SolverDiagnostics,
   VersionSnapshot,
   Viewer,
   WorkspaceId,
@@ -82,7 +79,6 @@ import { generateEngineeringDrawingSVG } from './cad/drawing'
 import { exportToSTEP } from './cad/stepExporter'
 import { SCRIPT_TEMPLATES, executeCADScript } from './cad/automate'
 import { raycastPlanarFace } from './cad/brep'
-import { solveCoupledConstraints } from './cad/constraintSolver'
 
 const SKETCH_PLANE_Y = 0.6
 
@@ -90,6 +86,43 @@ function sketchPlaneAxes(plane: SketchPlane) {
   if (plane === 'top') return { uAxis: 0, vAxis: 2, normalAxis: 1 }
   if (plane === 'front') return { uAxis: 0, vAxis: 1, normalAxis: 2 }
   return { uAxis: 2, vAxis: 1, normalAxis: 0 }
+}
+
+function sketchPlaneFrame(plane: SketchPlane, arbitraryPlane?: ArbitraryPlane) {
+  if (arbitraryPlane) {
+    return {
+      origin: new THREE.Vector3(...arbitraryPlane.origin),
+      uAxis: new THREE.Vector3(...arbitraryPlane.uAxis).normalize(),
+      vAxis: new THREE.Vector3(...arbitraryPlane.vAxis).normalize(),
+      normal: new THREE.Vector3(...arbitraryPlane.normal).normalize(),
+    }
+  }
+  if (plane === 'top') {
+    return {
+      origin: new THREE.Vector3(0, SKETCH_PLANE_Y, 0),
+      uAxis: new THREE.Vector3(1, 0, 0),
+      vAxis: new THREE.Vector3(0, 0, -1),
+      normal: new THREE.Vector3(0, 1, 0),
+    }
+  }
+  if (plane === 'front') {
+    return {
+      origin: new THREE.Vector3(0, 0, 0),
+      uAxis: new THREE.Vector3(1, 0, 0),
+      vAxis: new THREE.Vector3(0, 1, 0),
+      normal: new THREE.Vector3(0, 0, 1),
+    }
+  }
+  return {
+    origin: new THREE.Vector3(0, 0, 0),
+    uAxis: new THREE.Vector3(0, 0, 1),
+    vAxis: new THREE.Vector3(0, 1, 0),
+    normal: new THREE.Vector3(-1, 0, 0),
+  }
+}
+
+function sketchPointToWorld(point: [number, number], frame: ReturnType<typeof sketchPlaneFrame>) {
+  return frame.origin.clone().addScaledVector(frame.uAxis, point[0]).addScaledVector(frame.vAxis, point[1])
 }
 
 function planeLocalExtrusionProfile(points: [number, number][], plane: SketchPlane): [number, number][] {
@@ -430,8 +463,12 @@ function App() {
   const viewportRef = useRef<HTMLDivElement>(null)
   const workspaceSwitcherRef = useRef<HTMLDivElement>(null)
   const viewerRef = useRef<Viewer | null>(null)
-  const sketchToolRef = useRef<SketchTool>('rectangle')
   const editingSketchRef = useRef<SketchFeature | null>(null)
+  const sketchGridRef = useRef<THREE.GridHelper | null>(null)
+  const groundRef = useRef<THREE.Mesh | null>(null)
+  const sketchReturnProjectionRef = useRef<'perspective' | 'orthographic'>('perspective')
+  const sketchViewActiveRef = useRef(false)
+  const orthoFrustumSizeRef = useRef(18)
 
   const [parts, setParts] = useState<Part[]>(() => {
     try {
@@ -472,8 +509,10 @@ function App() {
   const [future, setFuture] = useState<ModelSnapshot[]>([])
   const [sketchEntities, setSketchEntities] = useState<SketchEntity[]>([])
   const [sketchType, setSketchType] = useState<SketchTool>('rectangle')
-  const [sketchPlane] = useState<SketchPlane>('top')
+  const [sketchPlane, setSketchPlane] = useState<SketchPlane>('top')
   const [sketchStage, setSketchStage] = useState<SketchStage>('idle')
+  const [pendingSketchPoints, setPendingSketchPoints] = useState<[number, number][]>([])
+  const [sketchCursor, setSketchCursor] = useState<[number, number] | null>(null)
   const [extrudeDistance, setExtrudeDistance] = useState(4)
   const [showExtrudeDialog, setShowExtrudeDialog] = useState(false)
   const [solidCommand, setSolidCommand] = useState<SolidCommand | null>(null)
@@ -537,14 +576,6 @@ function App() {
   const [hoveredFacePlane, setHoveredFacePlane] = useState<ArbitraryPlane | null>(null)
   const [activeArbitraryPlane, setActiveArbitraryPlane] = useState<ArbitraryPlane | null>(null)
   const facePickOverlayRef = useRef<THREE.Mesh | null>(null)
-
-  // ── Coupled Non-Linear Constraint Solver State ─────────────────────────────
-  const [sketchConstraints, setSketchConstraints] = useState<NonLinearConstraint[]>([])
-  const [solverDiagnostics, setSolverDiagnostics] = useState<SolverDiagnostics | null>(null)
-  const [pendingConstraintType, setPendingConstraintType] = useState<CoupledConstraintType | null>(null)
-  const [constraintSelectedEntities, setConstraintSelectedEntities] = useState<string[]>([])
-  const [dimensionInput, setDimensionInput] = useState('')
-  const [showDimensionDialog, setShowDimensionDialog] = useState(false)
 
   const selectedPart = parts.find((part) => part.id === selectedId) ?? null
   const selectedSketch = sketches.find((sketch) => sketch.id === selectedSketchId) ?? null
@@ -672,91 +703,94 @@ function App() {
 
   function startSketch(profileType: SketchTool = 'rectangle') {
     editingSketchRef.current = null
+    sketchReturnProjectionRef.current = cameraProjection
     setSelectedSketchId(null)
     setSketchEntities([])
     setSketchType(profileType)
-    sketchToolRef.current = profileType
+    setPendingSketchPoints([])
+    setSketchCursor(null)
     setShowExtrudeDialog(false)
     setSolidCommand(null)
-    setSketchConstraints([])
-    setSolverDiagnostics(null)
-    setConstraintSelectedEntities([])
     setActiveArbitraryPlane(null)
     setHoveredFacePlane(null)
+    setSketchPlane('top')
     setSketchStage('plane-selection')
-    notify('Click any flat face on a part – or press a standard plane button')
+    notify('Choose a sketch plane or click a flat face in the viewport')
   }
 
   function pickStandardPlane(plane: 'top' | 'front' | 'right') {
     setActiveArbitraryPlane(null)
     setHoveredFacePlane(null)
+    setSketchPlane(plane)
+    sketchViewActiveRef.current = true
+    setCameraProjection('orthographic')
     setSketchStage('drawing')
-    notify(`Sketch plane: ${plane.toUpperCase()}`)
+    notify(`Sketching on ${plane} plane · choose a tool, then click to draw`)
   }
 
-  // ── Constraint Solver integration ─────────────────────────────────────────
-  function applyConstraintToSketch(type: CoupledConstraintType, entityIds: string[], value?: number) {
-    const newConstraint: NonLinearConstraint = {
-      id: `c_${Date.now()}`,
-      type,
-      entityIds,
-      value,
-    }
-    const nextConstraints = [...sketchConstraints, newConstraint]
-    setSketchConstraints(nextConstraints)
-
-    // Run LM solver immediately
-    const result = solveCoupledConstraints(sketchEntities, nextConstraints)
-    setSketchEntities(result.solvedEntities)
-    setSolverDiagnostics(result.diagnostics)
-
-    const dof = result.diagnostics.dof
-    const statusLabel = result.diagnostics.status === 'fully_defined'
-      ? '✅ Fully Defined (0 DOF)'
-      : result.diagnostics.status === 'over_defined'
-      ? '⛔ Over-Defined'
-      : `⚠ Under-Defined (${dof} DOF remaining)`
-
-    notify(`${type.toUpperCase()} constraint applied · ${statusLabel}`)
-    setPendingConstraintType(null)
-    setConstraintSelectedEntities([])
-  }
-
-  function triggerConstraint(type: CoupledConstraintType) {
-    if (constraintSelectedEntities.length === 0) {
-      notify(`Select sketch entities first, then apply ${type}`)
-      setPendingConstraintType(type)
+  function finishSketch() {
+    if (sketchEntities.length === 0) {
+      notify('Draw at least one entity before finishing the sketch')
       return
     }
-    if (type === 'distance') {
-      setShowDimensionDialog(true)
-      setPendingConstraintType('distance')
-      return
+
+    const editingSketch = editingSketchRef.current
+    const feature: SketchFeature = {
+      id: editingSketch?.id ?? createFeatureId('sketch'),
+      name: editingSketch?.name ?? `Sketch ${sketches.length + 1}`,
+      plane: sketchPlane,
+      arbitraryPlane: activeArbitraryPlane ?? undefined,
+      entities: sketchEntities,
+      visible: editingSketch?.visible ?? true,
     }
-    applyConstraintToSketch(type, constraintSelectedEntities)
+    const nextSketches = editingSketch
+      ? sketches.map((sketch) => (sketch.id === editingSketch.id ? feature : sketch))
+      : [...sketches, feature]
+
+    commitSketches(nextSketches)
+    setSelectedSketchId(feature.id)
+    setSelectedId(null)
+    editingSketchRef.current = null
+    setSketchEntities([])
+    setPendingSketchPoints([])
+    setSketchCursor(null)
+    setActiveArbitraryPlane(null)
+    setSketchStage('idle')
+    setCameraProjection(sketchReturnProjectionRef.current)
+    notify(`${feature.name} saved`)
   }
 
-  function commitDistanceDimension() {
-    const val = parseFloat(dimensionInput)
-    if (!isFinite(val) || val <= 0) {
-      notify('Enter a valid positive distance (mm)')
-      return
-    }
-    applyConstraintToSketch('distance', constraintSelectedEntities, val)
-    setShowDimensionDialog(false)
-    setDimensionInput('')
+  function cancelSketch() {
+    const wasDrawing = sketchStage === 'drawing'
+    editingSketchRef.current = null
+    setSketchEntities([])
+    setPendingSketchPoints([])
+    setSketchCursor(null)
+    setActiveArbitraryPlane(null)
+    setHoveredFacePlane(null)
+    setSketchStage('idle')
+    if (wasDrawing) setCameraProjection(sketchReturnProjectionRef.current)
   }
 
-  function toggleConstraintEntitySelection(entityId: string) {
-    setConstraintSelectedEntities((prev) =>
-      prev.includes(entityId) ? prev.filter((id) => id !== entityId) : [...prev, entityId]
-    )
+  function editSketch(sketch: SketchFeature) {
+    sketchReturnProjectionRef.current = cameraProjection
+    editingSketchRef.current = sketch
+    setSketchPlane(sketch.plane)
+    setActiveArbitraryPlane(sketch.arbitraryPlane ?? null)
+    setSketchEntities(sketch.entities)
+    setPendingSketchPoints([])
+    setSketchCursor(null)
+    setSelectedSketchId(sketch.id)
+    setSelectedId(null)
+    sketchViewActiveRef.current = true
+    setCameraProjection('orthographic')
+    setSketchStage('drawing')
   }
 
-  function clearAllConstraints() {
-    setSketchConstraints([])
-    setSolverDiagnostics(null)
-    notify('All constraints cleared')
+  function chooseSketchTool(tool: SketchTool) {
+    setSketchType(tool)
+    setPendingSketchPoints([])
+    setSketchCursor(null)
   }
 
   function addPart(kind: Primitive, options?: { name: string; size: [number, number, number]; position: [number, number, number]; color: string }) {
@@ -1555,6 +1589,108 @@ function App() {
               <Cuboid size={16} />
               <span>Combine</span>
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Plane Selection HUD ─────────────────────────────────────────── */}
+      {activeWorkspace === 'design' && sketchStage === 'plane-selection' && (
+        <div className="solid-ribbon" style={{ background: '#1a2535', borderBottom: '1px solid #2d6fa8' }}>
+          <div className="solid-ribbon-tab" style={{ color: '#4fc3f7', borderColor: '#4fc3f7' }}>
+            <SlidersHorizontal size={14} />
+            <strong>Select Sketch Plane</strong>
+          </div>
+          <span className="solid-ribbon-divider" />
+          <div className="solid-ribbon-tools">
+            <button onClick={() => pickStandardPlane('top')} style={{ color: '#a5d6fb' }}>
+              <Layers3 size={15} /><span>Top (XZ)</span>
+            </button>
+            <button onClick={() => pickStandardPlane('front')} style={{ color: '#a5d6fb' }}>
+              <Layers3 size={15} /><span>Front (XY)</span>
+            </button>
+            <button onClick={() => pickStandardPlane('right')} style={{ color: '#a5d6fb' }}>
+              <Layers3 size={15} /><span>Right (YZ)</span>
+            </button>
+            <span className="solid-ribbon-divider" />
+            <span style={{ fontSize: 11, color: hoveredFacePlane ? '#4fc3f7' : '#6b7a8d', padding: '0 8px' }}>
+              {hoveredFacePlane ? `🎯 ${hoveredFacePlane.name}` : '⬆ Hover a part face to pick an arbitrary plane'}
+            </span>
+          </div>
+          <div className="solid-ribbon-selection">
+            {activeArbitraryPlane ? `✅ ${activeArbitraryPlane.name}` : 'No plane selected'}
+          </div>
+          <button
+            className="subtle-button"
+            style={{ marginLeft: 'auto', fontSize: 11 }}
+            onClick={() => { setSketchStage('idle'); setActiveArbitraryPlane(null); setHoveredFacePlane(null) }}
+          >
+            <X size={13} /> Cancel
+          </button>
+        </div>
+      )}
+
+      {/* ── Sketch Drawing Ribbon with Constraint Solver ─────────────────── */}
+      {activeWorkspace === 'design' && sketchStage === 'drawing' && (
+        <div className="solid-ribbon" style={{ background: '#1b2a1b', borderBottom: '1px solid #3a7a3a' }}>
+          <div className="solid-ribbon-tab" style={{ color: '#7ec87e', borderColor: '#5aad5a' }}>
+            <Ruler size={14} />
+            <strong>Sketch</strong>
+          </div>
+          <span className="solid-ribbon-divider" />
+
+          {/* Constraint Buttons */}
+          <div className="solid-ribbon-tools">
+            <span style={{ fontSize: 10, color: '#6b7a6b', paddingRight: 4 }}>CONSTRAIN:</span>
+            {(['horizontal', 'vertical', 'coincident', 'parallel', 'perpendicular', 'equal_length', 'tangent'] as CoupledConstraintType[]).map((ct) => (
+              <button
+                key={ct}
+                onClick={() => triggerConstraint(ct)}
+                style={{ color: pendingConstraintType === ct ? '#7ec87e' : '#c1cad5', borderColor: pendingConstraintType === ct ? '#5aad5a' : 'transparent' }}
+                title={ct.replace(/_/g, ' ')}
+              >
+                <span style={{ fontSize: 10, fontWeight: 600 }}>
+                  {ct === 'horizontal' ? 'H' : ct === 'vertical' ? 'V' : ct === 'coincident' ? '⊙' : ct === 'parallel' ? '∥' : ct === 'perpendicular' ? '⊥' : ct === 'equal_length' ? '=' : '◯T'}
+                </span>
+                <span>{ct.replace(/_/g, ' ')}</span>
+              </button>
+            ))}
+            <button
+              onClick={() => triggerConstraint('distance')}
+              style={{ color: pendingConstraintType === 'distance' ? '#ffad48' : '#c1cad5' }}
+              title="Distance Dimension"
+            >
+              <Ruler size={14} /><span>Dimension</span>
+            </button>
+            <span className="solid-ribbon-divider" />
+            <button onClick={clearAllConstraints} style={{ color: '#e07070' }} title="Clear all constraints">
+              <X size={13} /><span>Clear</span>
+            </button>
+          </div>
+          <span className="solid-ribbon-divider" />
+
+          {/* DOF Live Diagnostic HUD */}
+          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8, paddingRight: 10 }}>
+            {solverDiagnostics ? (
+              <span style={{
+                fontSize: 11,
+                fontWeight: 700,
+                padding: '3px 10px',
+                borderRadius: 4,
+                background: solverDiagnostics.status === 'fully_defined' ? '#1a3a1a' : solverDiagnostics.status === 'over_defined' ? '#3a1a1a' : '#2a2a1a',
+                color: solverDiagnostics.status === 'fully_defined' ? '#7ec87e' : solverDiagnostics.status === 'over_defined' ? '#e07070' : '#ffad48',
+                border: `1px solid ${solverDiagnostics.status === 'fully_defined' ? '#3a7a3a' : solverDiagnostics.status === 'over_defined' ? '#7a3a3a' : '#6a5a1a'}`,
+              }}>
+                {solverDiagnostics.status === 'fully_defined' && '✅ Fully Defined'}
+                {solverDiagnostics.status === 'over_defined' && '⛔ Over-Defined'}
+                {solverDiagnostics.status === 'under_defined' && `⚠ Under-Defined · ${solverDiagnostics.dof} DOF`}
+                {' '}<span style={{ opacity: 0.6, fontWeight: 400 }}>ε={solverDiagnostics.residual.toFixed(4)}</span>
+              </span>
+            ) : (
+              <span style={{ fontSize: 11, color: '#6b7a6b' }}>No constraints · {sketchEntities.length} entities</span>
+            )}
+            <span style={{ fontSize: 10, color: '#5a7a5a' }}>
+              {activeArbitraryPlane ? `📐 ${activeArbitraryPlane.name}` : `📐 ${activeProfilePlane.toUpperCase()} plane`}
+            </span>
           </div>
         </div>
       )}
