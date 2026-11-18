@@ -605,7 +605,7 @@ function App() {
     setSketches(next.sketches)
     if (next.joints) setJoints(next.joints)
     setSavedAt('Unsaved changes')
-  }, [joints, parts, sketches])
+  }, [joints, parts, sketches, setJoints])
 
   const commitParts = useCallback((next: Part[]) => {
     commitModel({ parts: next, sketches, joints })
@@ -685,7 +685,7 @@ function App() {
     } catch (error) {
       notify(error instanceof Error ? `Could not open document: ${error.message}` : 'Could not open document')
     }
-  }, [notify])
+  }, [notify, setDimensionPointRefs, setDocumentName, setFuture, setJoints, setParts, setPast, setSavedAt, setSelectedId, setSelectedSketchEntityId, setSelectedSketchId, setSketchConstraints, setSketchStage, setSketches, setVersions])
 
   const undo = useCallback(() => {
     if (past.length === 0) return
@@ -698,7 +698,7 @@ function App() {
     if (selectedSketchId && !previous.sketches.some((sketch) => sketch.id === selectedSketchId)) setSelectedSketchId(null)
     setPast((items) => items.slice(0, -1))
     setSavedAt('Unsaved changes')
-  }, [joints, past, parts, selectedId, selectedSketchId, sketches])
+  }, [joints, past, parts, selectedId, selectedSketchId, sketches, setFuture, setJoints, setParts, setPast, setSavedAt, setSelectedId, setSelectedSketchId])
 
   const redo = useCallback(() => {
     if (future.length === 0) return
@@ -711,7 +711,7 @@ function App() {
     if (selectedSketchId && !next.sketches.some((sketch) => sketch.id === selectedSketchId)) setSelectedSketchId(null)
     setFuture((items) => items.slice(1))
     setSavedAt('Unsaved changes')
-  }, [future, joints, parts, selectedId, selectedSketchId, sketches])
+  }, [future, joints, parts, selectedId, selectedSketchId, sketches, setJoints, setParts, setPast, setSavedAt, setSelectedId, setSelectedSketchId, setFuture])
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -805,7 +805,7 @@ function App() {
     setSketchStage('idle')
     setShowExtrudeDialog(false)
     notify(`Created ${newParts.length} extruded ${newParts.length === 1 ? 'profile' : 'profiles'}`)
-  }, [activeArbitraryPlane, activeProfilePlane, commitParts, extrudeDistance, notify, parts, profileEntities, selectedSketch, selectedSketchId, sketchStage, sketchType])
+  }, [activeArbitraryPlane, activeProfilePlane, commitParts, extrudeDistance, notify, parts, profileEntities, selectedSketch, selectedSketchId, setShowExtrudeDialog, sketchStage, sketchType])
 
   function deleteSelectedSketch(sketchId: string) {
     const dependentParts = parts.filter((part) => part.sketchId === sketchId)
@@ -964,7 +964,7 @@ function App() {
     setDimensionPointRefs([])
   }
 
-  function addSketchPoint(point: [number, number]) {
+  const addSketchPoint = useCallback((point: [number, number]) => {
     if (sketchType === 'select' || sketchType === 'trim' || sketchType === 'offset' || sketchType === 'dimension') return
     const required = sketchType === 'arc' ? 3 : 2
     const next = [...pendingSketchPoints, point]
@@ -974,9 +974,9 @@ function App() {
     const entity: SketchEntity = { id: createFeatureId('entity'), type, points: next, closed }
     setSketchEntities((items) => [...items, entity])
     setPendingSketchPoints([])
-  }
+  }, [pendingSketchPoints, sketchType])
 
-  function addDimensionPoint(point: [number, number]) {
+  const addDimensionPoint = useCallback((point: [number, number]) => {
     let nearest: { entityId: string; pointIndex: number; distance: number; coordinate: [number, number] } | null = null
     for (const entity of sketchEntities) {
       for (let pointIndex = 0; pointIndex < entity.points.length; pointIndex++) {
@@ -1008,7 +1008,7 @@ function App() {
     setDimensionPointRefs([firstRef, ref])
     setDimensionValue(Number(Math.hypot(first[0] - nearest.coordinate[0], first[1] - nearest.coordinate[1]).toFixed(2)))
     notify('Enter a target length and apply the dimension')
-  }
+  }, [dimensionPointRefs, notify, sketchEntities])
 
   function applySketchDimension() {
     if (dimensionPointRefs.length !== 2 || !Number.isFinite(dimensionValue) || dimensionValue <= 0) {
@@ -1801,7 +1801,7 @@ function App() {
     }
     host.addEventListener('pointerdown', handlePointerDown)
     return () => host.removeEventListener('pointerdown', handlePointerDown)
-  }, [activeArbitraryPlane, dimensionPointRefs, notify, pendingSketchPoints, sketchConstraints, sketchEntities, sketchPlane, sketchStage, sketchType])
+  }, [activeArbitraryPlane, addDimensionPoint, addSketchPoint, dimensionPointRefs, notify, pendingSketchPoints, sketchConstraints, sketchEntities, sketchPlane, sketchStage, sketchType])
 
   useEffect(() => {
     const viewer = viewerRef.current
@@ -1936,7 +1936,7 @@ function App() {
         facePickOverlayRef.current = null
       }
     }
-  }, [sketchStage, parts])
+  }, [notify, parts, sketchStage])
 
   const activeMetrics = useMemo(() => {
     if (!selectedPart) return null
