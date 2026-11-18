@@ -15,6 +15,7 @@ import {
   EyeOff,
   FileText,
   Flame,
+  FolderOpen,
   Grid2X2,
   Layers3,
   Move3D,
@@ -60,6 +61,7 @@ import type {
   SectionAnalysisState,
   SimulationSetup,
   SketchEntity,
+  SketchConstraint,
   SketchFeature,
   SketchPlane,
   SketchProfile,
@@ -79,6 +81,7 @@ import { generateEngineeringDrawingSVG } from './cad/drawing'
 import { exportToSTEP } from './cad/stepExporter'
 import { SCRIPT_TEMPLATES, executeCADScript } from './cad/automate'
 import { raycastPlanarFace } from './cad/brep'
+import { solveCoupledConstraints } from './cad/constraintSolver'
 
 const SKETCH_PLANE_Y = 0.6
 
@@ -444,13 +447,14 @@ function createFeatureId(prefix: string): string {
 function App() {
   const viewportRef = useRef<HTMLDivElement>(null)
   const workspaceSwitcherRef = useRef<HTMLDivElement>(null)
+  const documentInputRef = useRef<HTMLInputElement>(null)
   const viewerRef = useRef<Viewer | null>(null)
   const editingSketchRef = useRef<SketchFeature | null>(null)
   const sketchReturnProjectionRef = useRef<'perspective' | 'orthographic'>('perspective')
 
   const [parts, setParts] = useState<Part[]>(() => {
     try {
-      const saved = localStorage.getItem('clonecad-document')
+      const saved = localStorage.getItem('bestcad-document') ?? localStorage.getItem('clonecad-document')
       if (saved) {
         const parsed = JSON.parse(saved)
         if (Array.isArray(parsed.parts) && parsed.parts.length > 0) return parsed.parts
@@ -461,7 +465,7 @@ function App() {
 
   const [sketches, setSketches] = useState<SketchFeature[]>(() => {
     try {
-      const saved = localStorage.getItem('clonecad-document')
+      const saved = localStorage.getItem('bestcad-document') ?? localStorage.getItem('clonecad-document')
       if (saved) {
         const parsed = JSON.parse(saved)
         if (Array.isArray(parsed.sketches)) return parsed.sketches
@@ -472,7 +476,7 @@ function App() {
 
   const [joints, setJoints] = useState<AssemblyJoint[]>(() => {
     try {
-      const saved = localStorage.getItem('clonecad-document')
+      const saved = localStorage.getItem('bestcad-document') ?? localStorage.getItem('clonecad-document')
       if (saved) {
         const parsed = JSON.parse(saved)
         if (Array.isArray(parsed.joints)) return parsed.joints
@@ -486,6 +490,10 @@ function App() {
   const [past, setPast] = useState<ModelSnapshot[]>([])
   const [future, setFuture] = useState<ModelSnapshot[]>([])
   const [sketchEntities, setSketchEntities] = useState<SketchEntity[]>([])
+  const [sketchConstraints, setSketchConstraints] = useState<SketchConstraint[]>([])
+  const [dimensionPointRefs, setDimensionPointRefs] = useState<{ entityId: string; pointIndex: number }[]>([])
+  const [dimensionValue, setDimensionValue] = useState(0)
+  const [constraintMessage, setConstraintMessage] = useState('')
   const [pendingSketchPoints, setPendingSketchPoints] = useState<[number, number][]>([])
   const [sketchType, setSketchType] = useState<SketchTool>('rectangle')
   const [sketchPlane, setSketchPlane] = useState<SketchPlane>('top')
@@ -504,7 +512,13 @@ function App() {
   const [propertiesOpen, setPropertiesOpen] = useState(true)
   const [search, setSearch] = useState('')
   const [toast, setToast] = useState('')
-  const [documentName, setDocumentName] = useState('Desk clamp')
+  const [documentName, setDocumentName] = useState(() => {
+    try {
+      const saved = localStorage.getItem('bestcad-document') ?? localStorage.getItem('clonecad-document')
+      const parsed = saved ? JSON.parse(saved) : null
+      return typeof parsed?.documentName === 'string' ? parsed.documentName : 'Desk clamp'
+    } catch { return 'Desk clamp' }
+  })
   const [renaming, setRenaming] = useState(false)
   const [savedAt, setSavedAt] = useState('All changes saved')
   const [exportDropdownOpen, setExportDropdownOpen] = useState(false)
@@ -545,9 +559,14 @@ function App() {
   const [scriptLog, setScriptLog] = useState('BestCad FeatureScript Engine Ready.')
 
   // Manage / Version Snapshots State
-  const [versions] = useState<VersionSnapshot[]>(() => [
-    { id: 'v1', label: 'V1.0 - Baseline clamp assembly', timestamp: '12:00:00', description: 'Initial geometry setup with 6 parts', parts: initialParts, sketches: [] },
-  ])
+  const [versions, setVersions] = useState<VersionSnapshot[]>(() => {
+    try {
+      const saved = localStorage.getItem('bestcad-document') ?? localStorage.getItem('clonecad-document')
+      const parsed = saved ? JSON.parse(saved) : null
+      if (Array.isArray(parsed?.versions)) return parsed.versions
+    } catch {}
+    return [{ id: 'v1', label: 'V1.0 - Baseline clamp assembly', timestamp: '12:00:00', description: 'Initial geometry setup with 6 parts', parts: initialParts, sketches: [] }]
+  })
 
   // ── B-Rep Face Picking & Arbitrary Sketch Plane State ──────────────────────
   const [hoveredFacePlane, setHoveredFacePlane] = useState<ArbitraryPlane | null>(null)
@@ -578,13 +597,78 @@ function App() {
 
   const saveDocument = useCallback(() => {
     try {
-      localStorage.setItem('clonecad-document', JSON.stringify({ documentName, parts, sketches, selectedId, joints, versions }))
+      const serialized = JSON.stringify({ documentName, parts, sketches, selectedId, joints, versions })
+      localStorage.setItem('bestcad-document', serialized)
+      localStorage.setItem('clonecad-document', serialized)
       setSavedAt('Saved just now')
       notify('Document saved to this browser')
     } catch {
       notify('Could not save this document')
     }
   }, [documentName, joints, notify, parts, selectedId, sketches, versions])
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      try {
+        const serialized = JSON.stringify({ documentName, parts, sketches, selectedId, joints, versions })
+        localStorage.setItem('bestcad-document', serialized)
+        localStorage.setItem('clonecad-document', serialized)
+        setSavedAt('Saved automatically')
+      } catch {
+        setSavedAt('Could not auto-save')
+      }
+    }, 700)
+    return () => window.clearTimeout(timeout)
+  }, [documentName, joints, parts, selectedId, sketches, versions])
+
+  const exportDocumentFile = useCallback(() => {
+    const document = { documentName, parts, sketches, selectedId, joints, versions }
+    const blob = new Blob([JSON.stringify(document, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const link = window.document.createElement('a')
+    link.href = url
+    link.download = `${documentName.replace(/[^a-z0-9_-]/gi, '_')}.bestcad.json`
+    link.click()
+    URL.revokeObjectURL(url)
+    setSavedAt('Exported just now')
+    notify('BestCad document exported')
+  }, [documentName, joints, notify, parts, selectedId, sketches, versions])
+
+  const importDocumentFile = useCallback(async (file?: File) => {
+    if (!file) return
+    try {
+      const parsed: unknown = JSON.parse(await file.text())
+      if (!parsed || typeof parsed !== 'object') throw new Error('Invalid document')
+      const candidate = parsed as Partial<ModelSnapshot & { documentName: string; selectedId: string | null; versions: VersionSnapshot[] }>
+      if (!Array.isArray(candidate.parts) || !Array.isArray(candidate.sketches ?? [])) {
+        throw new Error('Document must include parts and sketches')
+      }
+      if (candidate.joints !== undefined && !Array.isArray(candidate.joints)) throw new Error('Document contains invalid assembly joints')
+      if (candidate.versions !== undefined && !Array.isArray(candidate.versions)) throw new Error('Document contains invalid versions')
+      if (!candidate.parts.every((part) => part && typeof part.id === 'string' && Array.isArray(part.size) && part.size.length === 3 && part.size.every(Number.isFinite) && Array.isArray(part.position) && part.position.length === 3 && part.position.every(Number.isFinite))) {
+        throw new Error('Document contains an invalid part')
+      }
+      if (!(candidate.sketches ?? []).every((sketch) => sketch && typeof sketch.id === 'string' && Array.isArray(sketch.entities))) {
+        throw new Error('Document contains an invalid sketch')
+      }
+      setParts(candidate.parts)
+      setSketches(candidate.sketches ?? [])
+      setJoints(candidate.joints ?? [])
+      setVersions(candidate.versions ?? [])
+      setDocumentName(typeof candidate.documentName === 'string' && candidate.documentName.trim() ? candidate.documentName : file.name.replace(/\.bestcad\.json$/i, ''))
+      setSelectedId(candidate.selectedId && candidate.parts.some((part) => part.id === candidate.selectedId) ? candidate.selectedId : null)
+      setSelectedSketchId(null)
+      setPast([])
+      setFuture([])
+      setSketchConstraints([])
+      setDimensionPointRefs([])
+      setSketchStage('idle')
+      setSavedAt('Opened from file')
+      notify('BestCad document opened')
+    } catch (error) {
+      notify(error instanceof Error ? `Could not open document: ${error.message}` : 'Could not open document')
+    }
+  }, [notify])
 
   const undo = useCallback(() => {
     if (past.length === 0) return
@@ -713,6 +797,9 @@ function App() {
     sketchReturnProjectionRef.current = cameraProjection
     setSelectedSketchId(null)
     setSketchEntities([])
+    setSketchConstraints([])
+    setDimensionPointRefs([])
+    setConstraintMessage('')
     setPendingSketchPoints([])
     setSketchType(profileType)
     setShowExtrudeDialog(false)
@@ -742,6 +829,7 @@ function App() {
       plane: sketchPlane,
       arbitraryPlane: activeArbitraryPlane ?? undefined,
       entities: sketchEntities,
+      constraints: sketchConstraints,
       visible: previous?.visible ?? true,
     }
     const nextSketches = previous ? sketches.map((item) => item.id === previous.id ? feature : item) : [...sketches, feature]
@@ -761,17 +849,26 @@ function App() {
         }
         const bounds = sketchProfileBounds(profile)
         const size: Part['size'] = [...part.size]
-        const depthAxis = part.arbitraryPlane ? 2 : sketchPlaneAxes(feature.plane).normalAxis
-        const depth = part.size[depthAxis]
-        if (part.arbitraryPlane) {
-          size[0] = bounds.width
-          size[1] = bounds.height
-          size[2] = depth
+        if (part.kind === 'revolution') {
+          const maxRadius = Math.max(...profile.map(([radius]) => Math.abs(radius)))
+          const minHeight = Math.min(...profile.map(([, height]) => height))
+          const maxHeight = Math.max(...profile.map(([, height]) => height))
+          size[0] = maxRadius * 2
+          size[1] = maxHeight - minHeight
+          size[2] = maxRadius * 2
         } else {
-          const axes = sketchPlaneAxes(feature.plane)
-          size[axes.uAxis] = bounds.width
-          size[axes.vAxis] = bounds.height
-          size[axes.normalAxis] = depth
+          const depthAxis = part.arbitraryPlane ? 2 : sketchPlaneAxes(feature.plane).normalAxis
+          const depth = part.size[depthAxis]
+          if (part.arbitraryPlane) {
+            size[0] = bounds.width
+            size[1] = bounds.height
+            size[2] = depth
+          } else {
+            const axes = sketchPlaneAxes(feature.plane)
+            size[axes.uAxis] = bounds.width
+            size[axes.vAxis] = bounds.height
+            size[axes.normalAxis] = depth
+          }
         }
         regenerated.set(part.id, {
           ...part,
@@ -779,7 +876,7 @@ function App() {
           profileType: source.type === 'circle' ? 'circle' : source.type === 'rectangle' ? 'rectangle' : 'polygon',
           profilePlane: feature.plane,
           arbitraryPlane: feature.arbitraryPlane,
-          position: feature.arbitraryPlane ? [...feature.arbitraryPlane.origin] : feature.plane === 'top' ? [0, SKETCH_PLANE_Y, 0] : [0, 0, 0],
+          position: part.kind === 'revolution' ? [...part.position] : feature.arbitraryPlane ? [...feature.arbitraryPlane.origin] : feature.plane === 'top' ? [0, SKETCH_PLANE_Y, 0] : [0, 0, 0],
           size,
         })
       }
@@ -791,7 +888,10 @@ function App() {
     editingSketchRef.current = null
     setPendingSketchPoints([])
     setSketchEntities([])
+    setSketchConstraints([])
+    setDimensionPointRefs([])
     setActiveArbitraryPlane(null)
+    setConstraintMessage('')
     setSketchStage('idle')
     setCameraProjection(sketchReturnProjectionRef.current)
     notify(`${feature.name} saved · ready for 3D features`)
@@ -802,8 +902,11 @@ function App() {
     editingSketchRef.current = null
     setPendingSketchPoints([])
     setSketchEntities([])
+    setSketchConstraints([])
+    setDimensionPointRefs([])
     setActiveArbitraryPlane(null)
     setHoveredFacePlane(null)
+    setConstraintMessage('')
     setSketchStage('idle')
     setCameraProjection(returnProjection)
   }
@@ -814,6 +917,9 @@ function App() {
     setSketchPlane(sketch.plane)
     setActiveArbitraryPlane(sketch.arbitraryPlane ?? null)
     setSketchEntities(sketch.entities)
+    setSketchConstraints(sketch.constraints ?? [])
+    setDimensionPointRefs([])
+    setConstraintMessage(sketch.constraints?.length ? `${sketch.constraints.length} saved constraint(s)` : '')
     setPendingSketchPoints([])
     setSelectedSketchId(sketch.id)
     setSelectedId(null)
@@ -824,6 +930,7 @@ function App() {
   function chooseSketchTool(tool: SketchTool) {
     setSketchType(tool)
     setPendingSketchPoints([])
+    setDimensionPointRefs([])
   }
 
   function addSketchPoint(point: [number, number]) {
@@ -836,6 +943,65 @@ function App() {
     const entity: SketchEntity = { id: createFeatureId('entity'), type, points: next, closed }
     setSketchEntities((items) => [...items, entity])
     setPendingSketchPoints([])
+  }
+
+  function addDimensionPoint(point: [number, number]) {
+    let nearest: { entityId: string; pointIndex: number; distance: number; coordinate: [number, number] } | null = null
+    for (const entity of sketchEntities) {
+      for (let pointIndex = 0; pointIndex < entity.points.length; pointIndex++) {
+        const coordinate = entity.points[pointIndex]
+        const distance = Math.hypot(coordinate[0] - point[0], coordinate[1] - point[1])
+        if (!nearest || distance < nearest.distance) nearest = { entityId: entity.id, pointIndex, distance, coordinate }
+      }
+    }
+    if (!nearest || nearest.distance > 0.6) {
+      notify('Click within 0.6 mm of a sketch point to dimension it')
+      return
+    }
+    const ref = { entityId: nearest.entityId, pointIndex: nearest.pointIndex }
+    if (!dimensionPointRefs.length) {
+      setDimensionPointRefs([ref])
+      notify('Choose the second point for the dimension')
+      return
+    }
+    const firstRef = dimensionPointRefs[0]
+    if (firstRef.entityId === ref.entityId && firstRef.pointIndex === ref.pointIndex) {
+      notify('Choose a different second point')
+      return
+    }
+    const first = sketchEntities.find((entity) => entity.id === firstRef.entityId)?.points[firstRef.pointIndex]
+    if (!first) {
+      setDimensionPointRefs([ref])
+      return
+    }
+    setDimensionPointRefs([firstRef, ref])
+    setDimensionValue(Number(Math.hypot(first[0] - nearest.coordinate[0], first[1] - nearest.coordinate[1]).toFixed(2)))
+    notify('Enter a target length and apply the dimension')
+  }
+
+  function applySketchDimension() {
+    if (dimensionPointRefs.length !== 2 || !Number.isFinite(dimensionValue) || dimensionValue <= 0) {
+      notify('Choose two sketch points and enter a positive dimension')
+      return
+    }
+    const constraint: SketchConstraint = {
+      id: createFeatureId('constraint'),
+      type: 'distance',
+      entityIds: dimensionPointRefs.map((ref) => ref.entityId),
+      pointIndices: dimensionPointRefs.map((ref) => ref.pointIndex) as [number, number],
+      value: dimensionValue,
+    }
+    const nextConstraints = [...sketchConstraints, constraint]
+    const result = solveCoupledConstraints(sketchEntities, nextConstraints)
+    if (!result.diagnostics.converged) {
+      notify(`Dimension did not solve (${result.diagnostics.residual.toExponential(2)} residual)`)
+      return
+    }
+    setSketchEntities(result.solvedEntities)
+    setSketchConstraints(nextConstraints)
+    setConstraintMessage(`${nextConstraints.length} constraint(s) · ${result.diagnostics.status.replace('_', ' ')}`)
+    setDimensionPointRefs([])
+    notify(`Dimension set to ${dimensionValue.toFixed(2)} mm`)
   }
 
   function addPart(kind: Primitive, options?: { name: string; size: [number, number, number]; position: [number, number, number]; color: string }) {
@@ -870,9 +1036,96 @@ function App() {
     notify('Part duplicated')
   }
 
+  function createVersionSnapshot() {
+    const version: VersionSnapshot = {
+      id: createFeatureId('version'),
+      label: `V${versions.length + 1} · ${documentName}`,
+      timestamp: new Date().toISOString(),
+      description: `${parts.length} part(s), ${sketches.length} sketch(es)`,
+      parts: structuredClone(parts),
+      sketches: structuredClone(sketches),
+      joints: structuredClone(joints),
+    }
+    setVersions((current) => [...current, version])
+    setSavedAt('Unsaved changes')
+    notify(`${version.label} snapshot created`)
+  }
+
+  function restoreVersion(version: VersionSnapshot) {
+    commitModel({ parts: structuredClone(version.parts), sketches: structuredClone(version.sketches), joints: structuredClone(version.joints ?? joints) })
+    setSelectedId(null)
+    setSelectedSketchId(null)
+    notify(`${version.label} restored · use Undo to return to the previous model`)
+  }
+
+  function updateSelectedPartSize(axis: 0 | 1 | 2, value: number) {
+    if (!selectedPart || !Number.isFinite(value) || value <= 0) return
+    const updatedSize: Part['size'] = [...selectedPart.size]
+    updatedSize[axis] = value
+    let updatedProfile = selectedPart.profile
+    let nextSketches = sketches
+    if (selectedPart.profile && ['extrusion', 'revolution'].includes(selectedPart.kind)) {
+      let profileAxis: number
+      let center: number
+      let oldDimension: number
+      if (selectedPart.kind === 'revolution') {
+        profileAxis = axis === 1 ? 1 : 0
+        if (profileAxis === 0) {
+          center = 0
+          oldDimension = selectedPart.size[0]
+          updatedSize[0] = value
+          updatedSize[2] = value
+        } else {
+          const heights = selectedPart.profile.map((point) => point[1])
+          center = (Math.min(...heights) + Math.max(...heights)) / 2
+          oldDimension = Math.max(...heights) - Math.min(...heights)
+        }
+      } else {
+        const axes = sketchPlaneAxes(selectedPart.profilePlane ?? 'top')
+        profileAxis = axis === axes.uAxis ? 0 : axis === axes.vAxis ? 1 : -1
+        const vals = profileAxis < 0 ? [] : selectedPart.profile.map((point) => point[profileAxis])
+        center = vals.length ? (Math.min(...vals) + Math.max(...vals)) / 2 : 0
+        oldDimension = vals.length ? Math.max(...vals) - Math.min(...vals) : 0
+      }
+      if (profileAxis >= 0) {
+        if (oldDimension <= 1e-9) return
+        const factor = value / oldDimension
+        updatedProfile = selectedPart.profile.map((point): [number, number] => {
+          const scaled: [number, number] = [...point]
+          scaled[profileAxis] = center + (point[profileAxis] - center) * factor
+          return scaled
+        })
+        if (selectedPart.sketchId && selectedPart.sketchEntityId) {
+          nextSketches = sketches.map((sketch) => sketch.id === selectedPart.sketchId ? {
+            ...sketch,
+            entities: sketch.entities.map((entity) => entity.id === selectedPart.sketchEntityId ? {
+              ...entity,
+              points: entity.points.map((point): [number, number] => {
+                const scaled: [number, number] = [...point]
+                scaled[profileAxis] = center + (point[profileAxis] - center) * factor
+                return scaled
+              }),
+            } : entity),
+          } : sketch)
+        }
+      }
+    }
+    const updatedParts = parts.map((part) => part.id === selectedPart.id ? { ...part, size: updatedSize, profile: updatedProfile } : part)
+    commitModel({ parts: updatedParts, sketches: nextSketches, joints })
+  }
+
   function openSolidCommand(command: SolidCommand) {
     if (command === 'revolve') {
-      notify('Revolve is not implemented yet; use Extrude for sketch-based solid features')
+      if (!selectedSketch) {
+        notify('Finish and select a sketch before creating a revolve')
+        return
+      }
+      if (selectedSketch.plane !== 'front' || selectedSketch.arbitraryPlane) {
+        notify('Revolve currently uses a sketch on the Front (XY) plane')
+        return
+      }
+      setOperationValue(360)
+      setSolidCommand('revolve')
       return
     } else if (command === 'combine') {
       if (!selectedPart || parts.filter((p) => p.id !== selectedPart.id).length === 0) {
@@ -891,20 +1144,21 @@ function App() {
   }
 
   function runCircularPattern() {
-    if (!selectedPart || operationValue < 2) return
-    const count = operationValue
-    const radius = operationSpacing || 3.0
+    if (!selectedPart || !Number.isFinite(operationValue) || !Number.isFinite(operationSpacing) || operationValue < 2 || operationSpacing <= 0) {
+      notify('Choose at least two instances and a positive pattern radius')
+      return
+    }
+    const count = Math.min(24, Math.floor(operationValue))
+    const radius = operationSpacing
+    const axisIndex = operationAxis === 'x' ? 0 : operationAxis === 'y' ? 1 : 2
+    const radialAxes = [0, 1, 2].filter((axis) => axis !== axisIndex)
     const copies: Part[] = []
 
     for (let i = 1; i < count; i++) {
       const angle = (i * Math.PI * 2) / count
-      const cosA = Math.cos(angle)
-      const sinA = Math.sin(angle)
-      const newPos: Part['position'] = [
-        selectedPart.position[0] + (operationAxis === 'y' ? cosA * radius : 0),
-        selectedPart.position[1] + (operationAxis === 'x' ? cosA * radius : 0),
-        selectedPart.position[2] + (operationAxis === 'y' ? sinA * radius : sinA * radius),
-      ]
+      const newPos: Part['position'] = [...selectedPart.position]
+      newPos[radialAxes[0]] += Math.cos(angle) * radius
+      newPos[radialAxes[1]] += Math.sin(angle) * radius
       copies.push({
         ...selectedPart,
         id: `${selectedPart.id}-circ-${Date.now()}-${i}`,
@@ -915,24 +1169,85 @@ function App() {
     }
     commitParts([...parts, ...copies])
     setSolidCommand(null)
-    notify(`Created circular pattern with ${count} instances`)
+      notify(`Created circular pattern with ${count} instances about ${operationAxis.toUpperCase()} axis`)
   }
 
   async function runSolidCommand() {
     if (!solidCommand) return
+    if (solidCommand === 'revolve') {
+      if (!selectedSketch || selectedSketch.plane !== 'front' || selectedSketch.arbitraryPlane) {
+        notify('Select a sketch on the Front (XY) plane before revolving')
+        return
+      }
+      if (!Number.isFinite(operationValue) || operationValue <= 0 || operationValue > 360) {
+        notify('Revolve angle must be greater than 0 and no more than 360 degrees')
+        return
+      }
+      const profiles = selectedSketch.entities.filter((entity) => entity.closed && entity.type !== 'arc')
+      if (!profiles.length) {
+        notify('The selected sketch needs a closed profile')
+        return
+      }
+      const revolutions: Part[] = []
+      for (const [index, entity] of profiles.entries()) {
+        const profile = closedProfilePoints(entity)
+        if (profile.length < 3 || polygonArea(profile) <= 1e-9 || polygonHasSelfIntersection(profile)) {
+          notify('Each revolve profile must be closed and non-self-intersecting')
+          return
+        }
+        const radii = profile.map(([radius]) => radius)
+        if (Math.min(...radii) < -0.05 && Math.max(...radii) > 0.05) {
+          notify('Revolve profile cannot cross the vertical axis')
+          return
+        }
+        if (Math.max(...radii.map(Math.abs)) < 0.05) {
+          notify('Revolve profile must have a non-zero radius')
+          return
+        }
+        const maxRadius = Math.max(...profile.map(([radius]) => Math.abs(radius)))
+        const minY = Math.min(...profile.map(([, height]) => height))
+        const maxY = Math.max(...profile.map(([, height]) => height))
+        revolutions.push({
+          id: createFeatureId('revolve'),
+          name: `Revolve ${parts.filter((part) => part.kind === 'revolution').length + index + 1}`,
+          kind: 'revolution',
+          profile,
+          profilePlane: 'front',
+          revolveAxis: 'vertical',
+          revolveAngle: operationValue,
+          sketchId: selectedSketch.id,
+          sketchEntityId: entity.id,
+          size: [maxRadius * 2, maxY - minY, maxRadius * 2],
+          position: [0, 0, 0],
+          color: '#78a9dc',
+          materialId: 'aluminum',
+          visible: true,
+          operation: `Revolve ${operationValue}°`,
+        })
+      }
+      commitParts([...parts, ...revolutions])
+      setSelectedId(revolutions[0].id)
+      setSolidCommand(null)
+      notify(`Created ${revolutions.length} revolved profile${revolutions.length === 1 ? '' : 's'}`)
+      return
+    }
     if (solidCommand === 'circular-pattern') {
       runCircularPattern()
       return
     }
     if (solidCommand === 'pattern') {
-      if (!selectedPart || operationValue < 2) return
+      if (!selectedPart || !Number.isFinite(operationValue) || !Number.isFinite(operationSpacing) || operationValue < 2 || operationSpacing <= 0) {
+        notify('Choose at least two instances and a positive spacing')
+        return
+      }
+      const count = Math.min(20, Math.floor(operationValue))
       const axis = operationAxis === 'x' ? 0 : operationAxis === 'y' ? 1 : 2
-      const copies = Array.from({ length: operationValue - 1 }, (_, index): Part => ({
+      const copies = Array.from({ length: count - 1 }, (_, index): Part => ({
         ...selectedPart,
         id: `${selectedPart.id}-pattern-${Date.now()}-${index}`,
         name: `${selectedPart.name} pattern ${index + 2}`,
         position: selectedPart.position.map((c, i) => (i === axis ? c + operationSpacing * (index + 1) : c)) as Part['position'],
-        operation: `Pattern ${operationValue} × ${operationSpacing} mm`,
+        operation: `Pattern ${count} × ${operationSpacing} mm`,
       }))
       commitParts([...parts, ...copies])
       setSolidCommand(null)
@@ -1409,11 +1724,13 @@ function App() {
       const world = raycaster.ray.intersectPlane(plane, new THREE.Vector3())
       if (!world) return
       event.preventDefault()
-      addSketchPoint([Number(world.clone().sub(frame.origin).dot(frame.uAxis).toFixed(3)), Number(world.clone().sub(frame.origin).dot(frame.vAxis).toFixed(3))])
+      const localPoint: [number, number] = [Number(world.clone().sub(frame.origin).dot(frame.uAxis).toFixed(3)), Number(world.clone().sub(frame.origin).dot(frame.vAxis).toFixed(3))]
+      if (sketchType === 'dimension') addDimensionPoint(localPoint)
+      else addSketchPoint(localPoint)
     }
     host.addEventListener('pointerdown', handlePointerDown)
     return () => host.removeEventListener('pointerdown', handlePointerDown)
-  }, [activeArbitraryPlane, pendingSketchPoints, sketchPlane, sketchStage, sketchType])
+  }, [activeArbitraryPlane, dimensionPointRefs, pendingSketchPoints, sketchEntities, sketchPlane, sketchStage, sketchType])
 
   useEffect(() => {
     const viewer = viewerRef.current
@@ -1598,6 +1915,16 @@ function App() {
         </div>
 
         <div className="top-actions">
+          <input
+            ref={documentInputRef}
+            type="file"
+            accept=".json,.bestcad.json,application/json"
+            hidden
+            onChange={(event) => {
+              void importDocumentFile(event.target.files?.[0])
+              event.target.value = ''
+            }}
+          />
           <button
             className="subtle-button"
             title="Toggle Perspective / Orthographic View"
@@ -1633,6 +1960,12 @@ function App() {
 
           <button className="subtle-button" onClick={saveDocument}>
             <Save size={15} /> Save
+          </button>
+          <button className="subtle-button" title="Open a BestCad JSON document" onClick={() => documentInputRef.current?.click()}>
+            <FolderOpen size={15} /> Open
+          </button>
+          <button className="subtle-button" title="Download a portable BestCad document" onClick={exportDocumentFile}>
+            <Download size={15} /> Save file
           </button>
 
           <div style={{ position: 'relative' }}>
@@ -1823,13 +2156,20 @@ function App() {
 
           <div className="solid-ribbon-tools">
             <span style={{ fontSize: 10, color: '#9ab99a' }}>DRAW:</span>
-            {(['select', 'line', 'rectangle', 'circle', 'arc'] as SketchTool[]).map((tool) => (
+            {(['select', 'line', 'rectangle', 'circle', 'arc', 'dimension'] as SketchTool[]).map((tool) => (
               <button key={tool} onClick={() => chooseSketchTool(tool)} style={{ color: sketchType === tool ? '#8be2a5' : '#c1cad5', borderBottom: sketchType === tool ? '2px solid #70c887' : '2px solid transparent' }}>
                 {tool === 'rectangle' ? <Square size={14} /> : tool === 'circle' ? <Circle size={14} /> : tool === 'line' ? <Ruler size={14} /> : tool === 'arc' ? <Rotate3D size={14} /> : <Search size={14} />}
                 <span>{tool[0].toUpperCase() + tool.slice(1)}</span>
               </button>
             ))}
-            <span style={{ fontSize: 10, color: '#8b9b8b', padding: '0 6px' }}>{sketchType === 'select' ? 'Select a drawing tool' : sketchType === 'line' ? 'Click two endpoints' : sketchType === 'arc' ? 'Click center, start, end' : sketchType === 'circle' ? 'Click center, then radius' : 'Click two corners'}</span>
+            <span style={{ fontSize: 10, color: '#8b9b8b', padding: '0 6px' }}>{sketchType === 'select' ? 'Select a drawing tool' : sketchType === 'line' ? 'Click two endpoints' : sketchType === 'arc' ? 'Click center, start, end' : sketchType === 'circle' ? 'Click center, then radius' : sketchType === 'dimension' ? 'Click two points to constrain their distance' : 'Click two corners'}</span>
+            {sketchType === 'dimension' && dimensionPointRefs.length === 2 && (
+              <>
+                <input aria-label="Dimension length in millimeters" type="number" min="0.01" step="0.1" value={dimensionValue} onChange={(event) => setDimensionValue(Number(event.target.value))} style={{ width: 76 }} />
+                <button className="subtle-button" onClick={applySketchDimension}>Apply mm</button>
+              </>
+            )}
+            {constraintMessage && <span style={{ fontSize: 10, color: '#9ab99a' }}>{constraintMessage}</span>}
             <button className="subtle-button" onClick={cancelSketch}><X size={13} /> Cancel</button>
             <button className="primary-button" onClick={finishSketch}><Save size={13} /> Finish Sketch</button>
           </div>
@@ -2228,8 +2568,23 @@ function App() {
                     <X size={14} />
                   </button>
                 </div>
+                {solidCommand === 'revolve' && (
+                  <>
+                    <p style={{ fontSize: 11, color: '#9aa6b2', margin: '0 0 8px' }}>Revolve closed profiles from the selected Front plane sketch around its vertical axis.</p>
+                    <label>
+                      Angle (degrees):
+                      <input type="number" min="1" max="360" step="1" value={operationValue} onChange={(e) => setOperationValue(Number(e.target.value))} />
+                    </label>
+                  </>
+                )}
                 {solidCommand === 'circular-pattern' && (
                   <>
+                    <label>
+                      Pattern axis:
+                      <select value={operationAxis} onChange={(e) => setOperationAxis(e.target.value as 'x' | 'y' | 'z')}>
+                        <option value="x">X axis</option><option value="y">Y axis</option><option value="z">Z axis</option>
+                      </select>
+                    </label>
                     <label>
                       Instance Count:
                       <input
@@ -2255,6 +2610,12 @@ function App() {
                 )}
                 {solidCommand === 'pattern' && (
                   <>
+                    <label>
+                      Pattern direction:
+                      <select value={operationAxis} onChange={(e) => setOperationAxis(e.target.value as 'x' | 'y' | 'z')}>
+                        <option value="x">X axis</option><option value="y">Y axis</option><option value="z">Z axis</option>
+                      </select>
+                    </label>
                     <label>
                       Instance Count:
                       <input
@@ -2415,10 +2776,7 @@ function App() {
                           value={Number(selectedPart.size[0].toFixed(2))}
                           onChange={(e) => {
                             const val = Number(e.target.value)
-                            if (val > 0) {
-                              const s: Part['size'] = [val, selectedPart.size[1], selectedPart.size[2]]
-                              commitParts(parts.map((p) => (p.id === selectedPart.id ? { ...p, size: s } : p)))
-                            }
+                            updateSelectedPartSize(0, val)
                           }}
                         />
                       </div>
@@ -2432,10 +2790,7 @@ function App() {
                           value={Number(selectedPart.size[1].toFixed(2))}
                           onChange={(e) => {
                             const val = Number(e.target.value)
-                            if (val > 0) {
-                              const s: Part['size'] = [selectedPart.size[0], val, selectedPart.size[2]]
-                              commitParts(parts.map((p) => (p.id === selectedPart.id ? { ...p, size: s } : p)))
-                            }
+                            updateSelectedPartSize(1, val)
                           }}
                         />
                       </div>
@@ -2449,10 +2804,7 @@ function App() {
                           value={Number(selectedPart.size[2].toFixed(2))}
                           onChange={(e) => {
                             const val = Number(e.target.value)
-                            if (val > 0) {
-                              const s: Part['size'] = [selectedPart.size[0], selectedPart.size[1], val]
-                              commitParts(parts.map((p) => (p.id === selectedPart.id ? { ...p, size: s } : p)))
-                            }
+                            updateSelectedPartSize(2, val)
                           }}
                         />
                       </div>
@@ -2479,6 +2831,30 @@ function App() {
       </div>
 
       {/* FULL-SCREEN WORKSPACE OVERLAYS FOR DRAWINGS AND AUTOMATION */}
+
+      {activeWorkspace === 'manage' && (
+        <div className="workspace-fullscreen-overlay">
+          <div className="drawing-sheet-toolbar">
+            <strong><ShieldCheck size={16} /> Document Versions</strong>
+            <div className="toolbar-actions">
+              <button className="subtle-button" onClick={() => setActiveWorkspace('design')}>Return to 3D View</button>
+              <button className="primary-button" onClick={createVersionSnapshot}><Save size={14} /> Create Snapshot</button>
+            </div>
+          </div>
+          <div style={{ padding: 24, overflow: 'auto', display: 'grid', gap: 10, alignContent: 'start' }}>
+            {versions.length === 0 && <p>No snapshots yet. Create one to save a named restore point.</p>}
+            {[...versions].reverse().map((version) => (
+              <article key={version.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16, padding: 16, border: '1px solid #39424e', borderRadius: 8, background: '#1a2028' }}>
+                <div>
+                  <strong>{version.label}</strong>
+                  <div style={{ marginTop: 4, color: '#9aa6b2', fontSize: 12 }}>{version.description} · {new Date(version.timestamp).toLocaleString()}</div>
+                </div>
+                <button className="subtle-button" onClick={() => restoreVersion(version)}>Restore</button>
+              </article>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* 1. Drawings 2D Sheet Workspace Overlay */}
       {activeWorkspace === 'drawings' && (

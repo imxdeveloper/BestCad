@@ -9,19 +9,19 @@ npm install
 npm run dev
 ```
 
-Create sketches on standard planes or flat model faces. Draw lines, rectangles, circles, or arcs, finish the sketch, then extrude one or more closed profiles. Reopen a sketch to edit it; new extrusions update from their linked source profile. Use the Solid ribbon for hole, shell, pattern, and Boolean operations.
+Create sketches on standard planes or flat model faces. Draw lines, rectangles, circles, or arcs, then use the Dimension tool to constrain the distance between two sketch points before creating a feature. Extrude closed profiles, or finish and select a sketch on the Front plane to revolve closed profiles around the vertical axis. Reopen a sketch to edit it; linked extrusions and revolves update from their source profile. Use the Solid ribbon for hole, shell, pattern, and Boolean operations.
 
-Documents are saved in browser local storage. Existing CloneCad documents keep using their original storage key so local models remain available after the rename.
+Documents auto-save in browser local storage. Use Open and Save file to move a `.bestcad.json` document between browsers or computers. Manage snapshots provide named restore points. Existing CloneCad documents remain readable after the rename.
 
 ## Current scope
 
-- **Design:** three.js viewport, standard and face based sketch planes, sketch editing, profile extrusion, basic patterns, approximate fillet/chamfer, shell/hole, and Boolean operations.
+- **Design:** three.js viewport, standard and face based sketch planes, editable sketches with distance constraints, profile extrusion and front-plane revolution, axis-based patterns, approximate fillet/chamfer, shell/hole, and Boolean operations.
 - **Assembly:** joint sliders, exploded view, and BOM export prototype.
 - **Drawings and exports:** SVG drawings, STL, OBJ, glTF, STEP, and BOM CSV export.
 - **Manufacture and simulation:** CAM toolpath preview and approximate static stress visualization.
 - **Automation:** script templates and a local script runner.
 
-These workspaces have prototype status. Important CAD capabilities still in development include a real constraint solver integrated with sketch editing, revolve/loft/sweep, a robust feature history and dependency graph, advanced B-rep operations, production-grade assemblies and drawings, and cloud collaboration.
+These workspaces have prototype status. Important capabilities still in development include broader sketch relations and solver diagnostics, loft/sweep and advanced feature types, a robust feature history and dependency graph, general-purpose B-rep operations, production-grade associative drawings and assemblies, validated STEP interchange, engineering-grade simulation and CAM, and cloud collaboration. Simulation results are approximate visual estimates; generated CAM paths and G-code are previews and must not be used to machine parts.
 
 ## Build
 

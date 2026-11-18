@@ -275,6 +275,7 @@ export type VersionSnapshot = {
   description: string
   parts: Part[]
   sketches: SketchFeature[]
+  joints?: AssemblyJoint[]
 }
 
 export type SavedDocument = {
