@@ -28,3 +28,15 @@ These workspaces have prototype status. Important capabilities still in developm
 ```sh
 npm run build
 ```
+
+## Checks
+
+Use Node.js 22.15 or newer, then run:
+
+```sh
+npm test
+npm run lint
+npm run build
+```
+
+The automated tests cover core sketch math, assembly and BOM calculations, CAM path generation and input validation, approximate simulation output, geometry inspection, drawing SVG generation, automation templates, and box B-rep topology. They do not replace interactive browser checks, validated STEP interoperability, or engineering validation of simulation and machining output.

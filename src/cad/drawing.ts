@@ -5,6 +5,13 @@ import type { Part } from './types'
  * Dimensions, and standard ISO/ANSI Engineering Title Block.
  */
 export function generateEngineeringDrawingSVG(parts: Part[], documentName = 'Desk Clamp'): string {
+  const safeDocumentName = documentName.toUpperCase().replace(/[&<>"']/g, (character) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&apos;',
+  })[character]!)
   let minX = Infinity, maxX = -Infinity
   let minY = Infinity, maxY = -Infinity
   let minZ = Infinity, maxZ = -Infinity
@@ -179,7 +186,7 @@ export function generateEngineeringDrawingSVG(parts: Part[], documentName = 'Des
     <line x1="285" y1="60" x2="285" y2="120" stroke="#1d2735" stroke-width="1.2"/>
 
     <text x="12" y="20" font-family="sans-serif" font-size="14" font-weight="800" fill="#1d2735">BESTCAD ENGINEERING</text>
-    <text x="12" y="48" font-family="sans-serif" font-size="11" font-weight="bold" fill="#475569">TITLE: ${documentName.toUpperCase()}</text>
+    <text x="12" y="48" font-family="sans-serif" font-size="11" font-weight="bold" fill="#475569">TITLE: ${safeDocumentName}</text>
     <text x="12" y="78" font-family="sans-serif" font-size="10" fill="#64748b">UNITS: METRIC (MM)</text>
     <text x="12" y="108" font-family="sans-serif" font-size="10" fill="#64748b">TOLERANCE: ± 0.05 MM</text>
 

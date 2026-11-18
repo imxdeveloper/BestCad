@@ -244,6 +244,9 @@ export function buildCylinderBRep(part: Part): BRepBody {
 export function buildExtrusionBRep(part: Part): BRepBody {
   const plane = part.profilePlane || 'top'
   const profile = part.profile || []
+  if (profile.length < 3 || profile.some((point) => !point.every(Number.isFinite))) {
+    throw new RangeError('An extrusion B-rep requires at least three finite profile points')
+  }
   const depth = part.size[plane === 'top' ? 1 : plane === 'front' ? 2 : 0] || 4
   const [cx, cy, cz] = part.position
 
@@ -268,6 +271,44 @@ export function buildExtrusionBRep(part: Part): BRepBody {
     cy + uAxis[1] * u + vAxis[1] * v,
     cz + uAxis[2] * u + vAxis[2] * v,
   ])
+
+  const vertices: BRepVertex[] = [
+    ...botBoundary.map((point, index) => ({ id: `v_${part.id}_bot_${index}`, point })),
+    ...topBoundary.map((point, index) => ({ id: `v_${part.id}_top_${index}`, point })),
+  ]
+  const edgeDefinitions: [number, number][] = []
+  for (let index = 0; index < profile.length; index++) {
+    const next = (index + 1) % profile.length
+    edgeDefinitions.push([index, next])
+  }
+  for (let index = 0; index < profile.length; index++) {
+    const next = (index + 1) % profile.length
+    edgeDefinitions.push([profile.length + index, profile.length + next])
+  }
+  for (let index = 0; index < profile.length; index++) {
+    edgeDefinitions.push([index, profile.length + index])
+  }
+  const edges: BRepEdge[] = edgeDefinitions.map(([startIndex, endIndex], index) => ({
+    id: `e_${part.id}_${index}`,
+    startVertexId: vertices[startIndex].id,
+    endVertexId: vertices[endIndex].id,
+    curveType: 'line',
+  }))
+  const bottomEdgeIds = edges.slice(0, profile.length).map((edge) => edge.id)
+  const topEdgeIds = edges.slice(profile.length, profile.length * 2).map((edge) => edge.id)
+  const verticalEdgeIds = edges.slice(profile.length * 2).map((edge) => edge.id)
+  const loops: BRepLoop[] = [
+    { id: `loop_${part.id}_top`, edgeIds: topEdgeIds, isOuter: true },
+    { id: `loop_${part.id}_bot`, edgeIds: bottomEdgeIds, isOuter: true },
+  ]
+  for (let index = 0; index < profile.length; index++) {
+    const next = (index + 1) % profile.length
+    loops.push({
+      id: `loop_${part.id}_side_${index}`,
+      edgeIds: [bottomEdgeIds[index], verticalEdgeIds[next], topEdgeIds[index], verticalEdgeIds[index]],
+      isOuter: true,
+    })
+  }
 
   const faces: BRepFace[] = [
     {
@@ -330,14 +371,7 @@ export function buildExtrusionBRep(part: Part): BRepBody {
     })
   }
 
-  return {
-    id: `brep_${part.id}`,
-    partId: part.id,
-    vertices: [],
-    edges: [],
-    loops: [],
-    faces,
-  }
+  return { id: `brep_${part.id}`, partId: part.id, vertices, edges, loops, faces }
 }
 
 /**
@@ -462,4 +496,3 @@ function pointInPolygon(point: [number, number], polygon: [number, number][]): b
   }
   return inside
 }
-

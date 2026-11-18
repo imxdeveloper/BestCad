@@ -1492,7 +1492,24 @@ function App() {
   }
 
   function calculateCAM() {
-    const res = generateCAMToolpaths(parts, camSetup)
+    if (!parts.some((part) => part.visible)) {
+      setCAMSetup((prev) => ({ ...prev, gcode: '', isSimulating: false }))
+      notify('Show at least one part before generating CAM toolpaths')
+      return
+    }
+    if (!Number.isFinite(camSetup.toolDiameterMm) || camSetup.toolDiameterMm <= 0 || !Number.isFinite(camSetup.feedRateMmMin) || camSetup.feedRateMmMin <= 0 || !Number.isFinite(camSetup.spindleRpm) || camSetup.spindleRpm <= 0 || !Number.isFinite(camSetup.stockOffsetMm) || camSetup.stockOffsetMm < 0) {
+      setCAMSetup((prev) => ({ ...prev, gcode: '', isSimulating: false }))
+      notify('Enter a positive tool diameter, spindle speed, and feed rate, plus a non-negative stock offset')
+      return
+    }
+    let res: ReturnType<typeof generateCAMToolpaths>
+    try {
+      res = generateCAMToolpaths(parts, camSetup)
+    } catch (error) {
+      setCAMSetup((prev) => ({ ...prev, gcode: '', isSimulating: false }))
+      notify(error instanceof Error ? `Cannot generate CAM: ${error.message}` : 'Cannot generate CAM toolpaths')
+      return
+    }
     setCAMSetup((prev) => ({ ...prev, gcode: res.gcode, isSimulating: false }))
     notify(`CAM Generated: ${res.segments.length} passes · Est. Time: ${res.totalTimeMinutes} min`)
   }

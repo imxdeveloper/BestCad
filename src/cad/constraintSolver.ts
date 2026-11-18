@@ -141,6 +141,19 @@ export function solveCoupledConstraints(
           const l2 = Math.hypot(q2[0] - q1[0], q2[1] - q1[1])
           residuals.push(l1 - l2)
         }
+      } else if (c.type === 'angle') {
+        if (c.entityIds.length >= 2) {
+          const p1 = readPt(c.entityIds[0], 0)
+          const p2 = readPt(c.entityIds[0], 1)
+          const q1 = readPt(c.entityIds[1], 0)
+          const q2 = readPt(c.entityIds[1], 1)
+          const dx1 = p2[0] - p1[0], dy1 = p2[1] - p1[1]
+          const dx2 = q2[0] - q1[0], dy2 = q2[1] - q1[1]
+          const currentAngle = Math.atan2(dx1 * dy2 - dy1 * dx2, dx1 * dx2 + dy1 * dy2)
+          const targetAngle = ((c.value ?? 0) * Math.PI) / 180
+          const difference = currentAngle - targetAngle
+          residuals.push(Math.atan2(Math.sin(difference), Math.cos(difference)))
+        }
       } else if (c.type === 'tangent') {
         // Line to Circle tangency: distance from circle center to line equals circle radius
         const lineId = c.entityIds[0]
@@ -157,9 +170,11 @@ export function solveCoupledConstraints(
         const dist = Math.abs(dy * center[0] - dx * center[1] + p2[0] * p1[1] - p2[1] * p1[0]) / len
         residuals.push(dist - radius)
       } else if (c.type === 'fixed') {
-        const p = readPt(c.entityIds[0], c.pointIndices ? c.pointIndices[0] : 0)
-        const targetX = c.value ?? p[0]
-        residuals.push(p[0] - targetX)
+        const pointIndex = c.pointIndices ? c.pointIndices[0] : 0
+        const p = readPt(c.entityIds[0], pointIndex)
+        const originalPoint = cloned.find((entity) => entity.id === c.entityIds[0])?.points[pointIndex] ?? [p[0], p[1]]
+        residuals.push(p[0] - (c.value ?? originalPoint[0]))
+        residuals.push(p[1] - originalPoint[1])
       }
     }
 
@@ -174,7 +189,7 @@ export function solveCoupledConstraints(
 
   const numEquations = currentResiduals.length
 
-  while (iter < maxIterations && currentCost > tolerance) {
+  while (iter < maxIterations && currentCost > tolerance * tolerance) {
     iter++
 
     // Compute Numerical Jacobian matrix J (M equations x N variables)
@@ -268,7 +283,7 @@ export function solveCoupledConstraints(
       dof,
       residual: Math.sqrt(currentCost),
       iterations: iter,
-      converged: currentCost <= tolerance,
+      converged: Math.sqrt(currentCost) <= tolerance,
     },
   }
 }
@@ -316,4 +331,3 @@ function solveLinearSystem(A: number[][], b: number[]): number[] | null {
 
   return result
 }
-

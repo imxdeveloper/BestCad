@@ -84,6 +84,7 @@ export type NonLinearConstraint = {
   type: CoupledConstraintType
   entityIds: string[]
   pointIndices?: [number, number]
+  /** Millimeters for distance, degrees for angle, and the X anchor for fixed-point constraints. */
   value?: number
 }
 
