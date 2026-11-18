@@ -213,6 +213,21 @@ function polygonHasSelfIntersection(points: [number, number][]): boolean {
   return false
 }
 
+function sketchEntityDistance(entity: SketchEntity, point: [number, number]): number {
+  const points = sketchEntityPoints(entity)
+  let nearest = Infinity
+  for (let index = 0; index < points.length - 1; index++) {
+    const [ax, ay] = points[index]
+    const [bx, by] = points[index + 1]
+    const dx = bx - ax
+    const dy = by - ay
+    const lengthSquared = dx * dx + dy * dy
+    const t = lengthSquared === 0 ? 0 : Math.max(0, Math.min(1, ((point[0] - ax) * dx + (point[1] - ay) * dy) / lengthSquared))
+    nearest = Math.min(nearest, Math.hypot(point[0] - (ax + t * dx), point[1] - (ay + t * dy)))
+  }
+  return nearest
+}
+
 const initialParts: Part[] = [
   { id: 'base', name: 'Base plate', kind: 'box', size: [8, 0.6, 5], position: [0, 0.3, 0], color: '#b7c1d0', materialId: 'steel', visible: true },
   { id: 'column', name: 'Support column', kind: 'box', size: [1.25, 4.2, 1.25], position: [0, 2.7, 0], color: '#cbd3df', materialId: 'steel', visible: true },
@@ -490,6 +505,7 @@ function App() {
   const [past, setPast] = useState<ModelSnapshot[]>([])
   const [future, setFuture] = useState<ModelSnapshot[]>([])
   const [sketchEntities, setSketchEntities] = useState<SketchEntity[]>([])
+  const [selectedSketchEntityId, setSelectedSketchEntityId] = useState<string | null>(null)
   const [sketchConstraints, setSketchConstraints] = useState<SketchConstraint[]>([])
   const [dimensionPointRefs, setDimensionPointRefs] = useState<{ entityId: string; pointIndex: number }[]>([])
   const [dimensionValue, setDimensionValue] = useState(0)
@@ -658,6 +674,7 @@ function App() {
       setDocumentName(typeof candidate.documentName === 'string' && candidate.documentName.trim() ? candidate.documentName : file.name.replace(/\.bestcad\.json$/i, ''))
       setSelectedId(candidate.selectedId && candidate.parts.some((part) => part.id === candidate.selectedId) ? candidate.selectedId : null)
       setSelectedSketchId(null)
+      setSelectedSketchEntityId(null)
       setPast([])
       setFuture([])
       setSketchConstraints([])
@@ -711,12 +728,22 @@ function App() {
         redo()
       } else if (command && event.key.toLowerCase() === 's') {
         event.preventDefault()
-        saveDocument()
+        if (event.shiftKey) exportDocumentFile()
+        else saveDocument()
+      } else if (command && event.key.toLowerCase() === 'o') {
+        event.preventDefault()
+        documentInputRef.current?.click()
+      } else if ((event.key === 'Delete' || event.key === 'Backspace') && sketchStage === 'drawing' && selectedSketchEntityId) {
+        event.preventDefault()
+        const deletedId = selectedSketchEntityId
+        setSketchEntities((entities) => entities.filter((entity) => entity.id !== deletedId))
+        setSketchConstraints((constraints) => constraints.filter((constraint) => !constraint.entityIds.includes(deletedId)))
+        setSelectedSketchEntityId(null)
       }
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [redo, saveDocument, undo])
+  }, [exportDocumentFile, redo, saveDocument, selectedSketchEntityId, setSketchConstraints, setSketchEntities, setSelectedSketchEntityId, sketchStage, undo])
 
   const deleteSelected = useCallback(() => {
     if (!selectedId) return
@@ -798,6 +825,7 @@ function App() {
     setSelectedSketchId(null)
     setSketchEntities([])
     setSketchConstraints([])
+    setSelectedSketchEntityId(null)
     setDimensionPointRefs([])
     setConstraintMessage('')
     setPendingSketchPoints([])
@@ -889,6 +917,7 @@ function App() {
     setPendingSketchPoints([])
     setSketchEntities([])
     setSketchConstraints([])
+    setSelectedSketchEntityId(null)
     setDimensionPointRefs([])
     setActiveArbitraryPlane(null)
     setConstraintMessage('')
@@ -903,6 +932,7 @@ function App() {
     setPendingSketchPoints([])
     setSketchEntities([])
     setSketchConstraints([])
+    setSelectedSketchEntityId(null)
     setDimensionPointRefs([])
     setActiveArbitraryPlane(null)
     setHoveredFacePlane(null)
@@ -917,6 +947,7 @@ function App() {
     setSketchPlane(sketch.plane)
     setActiveArbitraryPlane(sketch.arbitraryPlane ?? null)
     setSketchEntities(sketch.entities)
+    setSelectedSketchEntityId(null)
     setSketchConstraints(sketch.constraints ?? [])
     setDimensionPointRefs([])
     setConstraintMessage(sketch.constraints?.length ? `${sketch.constraints.length} saved constraint(s)` : '')
@@ -1002,6 +1033,15 @@ function App() {
     setConstraintMessage(`${nextConstraints.length} constraint(s) · ${result.diagnostics.status.replace('_', ' ')}`)
     setDimensionPointRefs([])
     notify(`Dimension set to ${dimensionValue.toFixed(2)} mm`)
+  }
+
+  function deleteSelectedSketchEntity() {
+    if (!selectedSketchEntityId) return
+    const deletedId = selectedSketchEntityId
+    setSketchEntities((entities) => entities.filter((entity) => entity.id !== deletedId))
+    setSketchConstraints((constraints) => constraints.filter((constraint) => !constraint.entityIds.includes(deletedId)))
+    setSelectedSketchEntityId(null)
+    setConstraintMessage('Selected sketch entity deleted')
   }
 
   function addPart(kind: Primitive, options?: { name: string; size: [number, number, number]; position: [number, number, number]; color: string }) {
@@ -1689,7 +1729,7 @@ function App() {
         })
         const geometry = new THREE.BufferGeometry()
         geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
-        const line = new THREE.Line(geometry, new THREE.LineBasicMaterial({ color: sketchStage === 'drawing' ? '#76e7a5' : '#ffad48', depthTest: false }))
+        const line = new THREE.Line(geometry, new THREE.LineBasicMaterial({ color: sketchStage === 'drawing' ? (entity.id === selectedSketchEntityId ? '#ffc46a' : '#76e7a5') : '#ffad48', depthTest: false }))
         line.renderOrder = 10
         viewer.sketch.add(line)
       })
@@ -1705,7 +1745,7 @@ function App() {
       })
       viewer.sketch.clear()
     }
-  }, [activeArbitraryPlane, parts, pendingSketchPoints, selectedSketchId, sketchEntities, sketchPlane, sketchStage, sketches])
+  }, [activeArbitraryPlane, parts, pendingSketchPoints, selectedSketchEntityId, selectedSketchId, sketchEntities, sketchPlane, sketchStage, sketches])
 
   useEffect(() => {
     if (sketchStage !== 'drawing') return
@@ -1716,21 +1756,52 @@ function App() {
     const mouse = new THREE.Vector2()
     const frame = sketchPlaneFrame(sketchPlane, activeArbitraryPlane ?? undefined)
     const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(frame.normal, frame.origin)
-    const handlePointerDown = (event: PointerEvent) => {
-      if (event.button !== 0) return
+    const getLocalPoint = (event: PointerEvent): [number, number] | null => {
       const rect = host.getBoundingClientRect()
       mouse.set(((event.clientX - rect.left) / rect.width) * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1)
       raycaster.setFromCamera(mouse, viewer.camera)
       const world = raycaster.ray.intersectPlane(plane, new THREE.Vector3())
-      if (!world) return
+      return world ? [Number(world.clone().sub(frame.origin).dot(frame.uAxis).toFixed(3)), Number(world.clone().sub(frame.origin).dot(frame.vAxis).toFixed(3))] : null
+    }
+    const handlePointerDown = (event: PointerEvent) => {
+      if (event.button !== 0) return
+      const localPoint = getLocalPoint(event)
+      if (!localPoint) return
       event.preventDefault()
-      const localPoint: [number, number] = [Number(world.clone().sub(frame.origin).dot(frame.uAxis).toFixed(3)), Number(world.clone().sub(frame.origin).dot(frame.vAxis).toFixed(3))]
       if (sketchType === 'dimension') addDimensionPoint(localPoint)
+      else if (sketchType === 'select') {
+        const candidate = sketchEntities
+          .map((entity) => ({ entity, distance: sketchEntityDistance(entity, localPoint) }))
+          .filter((item) => item.distance <= 0.35)
+          .sort((a, b) => a.distance - b.distance)[0]?.entity
+        setSelectedSketchEntityId(candidate?.id ?? null)
+        if (!candidate) return
+        const start = localPoint
+        const pointerId = event.pointerId
+        const handlePointerUp = (upEvent: PointerEvent) => {
+          if (upEvent.pointerId !== pointerId) return
+          window.removeEventListener('pointerup', handlePointerUp)
+          const end = getLocalPoint(upEvent)
+          if (!end) return
+          const delta: [number, number] = [end[0] - start[0], end[1] - start[1]]
+          if (Math.hypot(...delta) < 0.02) return
+          const moved = sketchEntities.map((entity) => entity.id === candidate.id ? {
+            ...entity,
+            points: entity.points.map(([x, y]): [number, number] => [x + delta[0], y + delta[1]]),
+          } : entity)
+          if (sketchConstraints.length) {
+            const result = solveCoupledConstraints(moved, sketchConstraints)
+            if (result.diagnostics.converged) setSketchEntities(result.solvedEntities)
+            else notify('Move blocked: existing sketch dimensions could not be satisfied')
+          } else setSketchEntities(moved)
+        }
+        window.addEventListener('pointerup', handlePointerUp)
+      }
       else addSketchPoint(localPoint)
     }
     host.addEventListener('pointerdown', handlePointerDown)
     return () => host.removeEventListener('pointerdown', handlePointerDown)
-  }, [activeArbitraryPlane, dimensionPointRefs, pendingSketchPoints, sketchEntities, sketchPlane, sketchStage, sketchType])
+  }, [activeArbitraryPlane, dimensionPointRefs, notify, pendingSketchPoints, sketchConstraints, sketchEntities, sketchPlane, sketchStage, sketchType])
 
   useEffect(() => {
     const viewer = viewerRef.current
@@ -1886,7 +1957,7 @@ function App() {
             <Cuboid size={20} strokeWidth={2.2} />
           </div>
           <span>
-            clone<span className="brand-accent">cad</span>
+            Best<span className="brand-accent">Cad</span>
           </span>
           <span className="brand-separator" />
           <button className="workspace-picker">
@@ -1961,10 +2032,10 @@ function App() {
           <button className="subtle-button" onClick={saveDocument}>
             <Save size={15} /> Save
           </button>
-          <button className="subtle-button" title="Open a BestCad JSON document" onClick={() => documentInputRef.current?.click()}>
+          <button className="subtle-button" title="Open a BestCad JSON document (Ctrl+O)" onClick={() => documentInputRef.current?.click()}>
             <FolderOpen size={15} /> Open
           </button>
-          <button className="subtle-button" title="Download a portable BestCad document" onClick={exportDocumentFile}>
+          <button className="subtle-button" title="Download a portable BestCad document (Ctrl+Shift+S)" onClick={exportDocumentFile}>
             <Download size={15} /> Save file
           </button>
 
@@ -2162,7 +2233,8 @@ function App() {
                 <span>{tool[0].toUpperCase() + tool.slice(1)}</span>
               </button>
             ))}
-            <span style={{ fontSize: 10, color: '#8b9b8b', padding: '0 6px' }}>{sketchType === 'select' ? 'Select a drawing tool' : sketchType === 'line' ? 'Click two endpoints' : sketchType === 'arc' ? 'Click center, start, end' : sketchType === 'circle' ? 'Click center, then radius' : sketchType === 'dimension' ? 'Click two points to constrain their distance' : 'Click two corners'}</span>
+            <span style={{ fontSize: 10, color: '#8b9b8b', padding: '0 6px' }}>{sketchType === 'select' ? 'Click an entity to select · drag to move' : sketchType === 'line' ? 'Click two endpoints' : sketchType === 'arc' ? 'Click center, start, end' : sketchType === 'circle' ? 'Click center, then radius' : sketchType === 'dimension' ? 'Click two points to constrain their distance' : 'Click two corners'}</span>
+            {sketchType === 'select' && selectedSketchEntityId && <button className="subtle-button" onClick={deleteSelectedSketchEntity}><Trash2 size={13} /> Delete entity</button>}
             {sketchType === 'dimension' && dimensionPointRefs.length === 2 && (
               <>
                 <input aria-label="Dimension length in millimeters" type="number" min="0.01" step="0.1" value={dimensionValue} onChange={(event) => setDimensionValue(Number(event.target.value))} style={{ width: 76 }} />
