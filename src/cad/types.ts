@@ -188,6 +188,7 @@ export type Part = {
   revolveAngle?: number // 1 to 360 degrees
   extrudeMode?: 'new' | 'symmetric' | 'cut'
   sketchId?: string
+  sketchEntityId?: string
   edgeTreatment?: EdgeTreatment
   meshData?: MeshData
   brep?: BRepBody

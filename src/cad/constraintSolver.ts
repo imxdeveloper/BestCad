@@ -65,12 +65,6 @@ export function solveCoupledConstraints(
     x[yIdx] = entity.points[ptIdx][1]
   })
 
-  const getPt = (entityId: string, ptIndex: number): [number, number] => {
-    const entry = pointMap.find((m) => m.entity.id === entityId && m.ptIdx === ptIndex)
-    if (!entry) return [0, 0]
-    return [x[entry.xIdx], x[entry.yIdx]]
-  }
-
   // Evaluates the constraint residual vector F(x)
   const evaluateResiduals = (state: Float64Array): number[] => {
     const residuals: number[] = []

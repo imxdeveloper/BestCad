@@ -1,7 +1,7 @@
 import type { SketchEntity, SketchConstraint } from './types'
-import { solveCoupledConstraints, inferGeometricConstraints } from './constraintSolver'
+import { solveCoupledConstraints } from './constraintSolver'
 
-export { solveCoupledConstraints, inferGeometricConstraints }
+export { solveCoupledConstraints }
 
 export function solveSketchConstraints(
   entities: SketchEntity[],

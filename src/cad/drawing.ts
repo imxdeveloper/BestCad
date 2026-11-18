@@ -178,7 +178,7 @@ export function generateEngineeringDrawingSVG(parts: Part[], documentName = 'Des
     <line x1="190" y1="30" x2="190" y2="120" stroke="#1d2735" stroke-width="1.2"/>
     <line x1="285" y1="60" x2="285" y2="120" stroke="#1d2735" stroke-width="1.2"/>
 
-    <text x="12" y="20" font-family="sans-serif" font-size="14" font-weight="800" fill="#1d2735">CLONECAD PROFESSIONAL ENGINEERING</text>
+    <text x="12" y="20" font-family="sans-serif" font-size="14" font-weight="800" fill="#1d2735">BESTCAD ENGINEERING</text>
     <text x="12" y="48" font-family="sans-serif" font-size="11" font-weight="bold" fill="#475569">TITLE: ${documentName.toUpperCase()}</text>
     <text x="12" y="78" font-family="sans-serif" font-size="10" fill="#64748b">UNITS: METRIC (MM)</text>
     <text x="12" y="108" font-family="sans-serif" font-size="10" fill="#64748b">TOLERANCE: ± 0.05 MM</text>

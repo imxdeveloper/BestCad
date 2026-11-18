@@ -1,16 +1,16 @@
 import type { Part } from './types'
 
 /**
- * Exports CloneCad geometry as a standardized ISO 10303-21 STEP (AP203/AP214) file format.
+ * Exports BestCad geometry as a standardized ISO 10303-21 STEP (AP203/AP214) file format.
  */
-export function exportToSTEP(parts: Part[], documentName = 'CloneCad_Model'): void {
+export function exportToSTEP(parts: Part[], documentName = 'BestCad_Model'): void {
   const timestamp = new Date().toISOString()
   const lines: string[] = []
 
   lines.push('ISO-10303-21;')
   lines.push('HEADER;')
-  lines.push(`FILE_DESCRIPTION(('CloneCad 3D Parametric CAD Model', '2;1'), '2;1');`)
-  lines.push(`FILE_NAME('${documentName}.stp', '${timestamp}', ('CloneCad User'), ('CloneCad CAD Lab'), 'CloneCad 2026.1', 'CloneCad STEP Kernel v2.0', '');`)
+  lines.push(`FILE_DESCRIPTION(('BestCad 3D Parametric CAD Model', '2;1'), '2;1');`)
+  lines.push(`FILE_NAME('${documentName}.stp', '${timestamp}', ('BestCad User'), ('BestCad CAD Lab'), 'BestCad 2026.1', 'BestCad STEP Kernel v2.0', '');`)
   lines.push(`FILE_SCHEMA(('CONFIG_CONTROL_DESIGN'));`)
   lines.push('ENDSEC;')
   lines.push('DATA;')

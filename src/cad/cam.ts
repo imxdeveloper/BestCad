@@ -45,7 +45,7 @@ export function generateCAMToolpaths(
   const gcodeLines: string[] = []
 
   gcodeLines.push('%')
-  gcodeLines.push('(PROGRAM: CLONECAD_CAM_OUTPUT)')
+  gcodeLines.push('(PROGRAM: BESTCAD_CAM_OUTPUT)')
   gcodeLines.push(`(STRATEGY: ${setup.selectedStrategy.toUpperCase()})`)
   gcodeLines.push(`(TOOL: ${toolDiameter.toFixed(1)}MM ENDMILL)`)
   gcodeLines.push('G90 G94 G17 G21')

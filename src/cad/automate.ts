@@ -10,7 +10,7 @@ export const SCRIPT_TEMPLATES: ScriptTemplate[] = [
     id: 'spur_gear',
     name: 'Parametric Spur Gear Generator',
     description: 'Generates a mechanical spur gear with pitch circle, tooth profiles, and center bore.',
-    code: `// CloneCad FeatureScript: Parametric Spur Gear
+    code: `// BestCad FeatureScript: Parametric Spur Gear
 const numTeeth = 16;
 const moduleVal = 0.5; // mm
 const pitchDiameter = numTeeth * moduleVal; // 8 mm
@@ -44,7 +44,7 @@ for (let i = 0; i < numTeeth; i++) {
     id: 'flange_plate',
     name: 'Bolt Flange with Hole Pattern',
     description: 'Creates a circular mounting flange with an 8-bolt circular pattern.',
-    code: `// CloneCad FeatureScript: Mounting Flange
+    code: `// BestCad FeatureScript: Mounting Flange
 const flangeDiameter = 12.0;
 const flangeThickness = 1.2;
 const numBolts = 8;
@@ -77,7 +77,7 @@ for (let i = 0; i < numBolts; i++) {
     id: 'heat_sink',
     name: 'Extruded Heatsink with Cooling Fins',
     description: 'Generates an aluminum electronics heat sink with multiple thermal cooling fins.',
-    code: `// CloneCad FeatureScript: Heatsink
+    code: `// BestCad FeatureScript: Heatsink
 const baseWidth = 8.0;
 const baseDepth = 8.0;
 const baseHeight = 0.8;
@@ -109,7 +109,7 @@ for (let i = 0; i < numFins; i++) {
 ]
 
 /**
- * Sandboxed script execution for CloneCad automation
+ * Sandboxed script execution for BestCad automation
  */
 export function executeCADScript(
   script: string,

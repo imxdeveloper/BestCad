@@ -89,44 +89,19 @@ function sketchPlaneAxes(plane: SketchPlane) {
 }
 
 function sketchPlaneFrame(plane: SketchPlane, arbitraryPlane?: ArbitraryPlane) {
-  if (arbitraryPlane) {
-    return {
-      origin: new THREE.Vector3(...arbitraryPlane.origin),
-      uAxis: new THREE.Vector3(...arbitraryPlane.uAxis).normalize(),
-      vAxis: new THREE.Vector3(...arbitraryPlane.vAxis).normalize(),
-      normal: new THREE.Vector3(...arbitraryPlane.normal).normalize(),
-    }
+  if (arbitraryPlane) return {
+    origin: new THREE.Vector3(...arbitraryPlane.origin),
+    uAxis: new THREE.Vector3(...arbitraryPlane.uAxis).normalize(),
+    vAxis: new THREE.Vector3(...arbitraryPlane.vAxis).normalize(),
+    normal: new THREE.Vector3(...arbitraryPlane.normal).normalize(),
   }
-  if (plane === 'top') {
-    return {
-      origin: new THREE.Vector3(0, SKETCH_PLANE_Y, 0),
-      uAxis: new THREE.Vector3(1, 0, 0),
-      vAxis: new THREE.Vector3(0, 0, -1),
-      normal: new THREE.Vector3(0, 1, 0),
-    }
-  }
-  if (plane === 'front') {
-    return {
-      origin: new THREE.Vector3(0, 0, 0),
-      uAxis: new THREE.Vector3(1, 0, 0),
-      vAxis: new THREE.Vector3(0, 1, 0),
-      normal: new THREE.Vector3(0, 0, 1),
-    }
-  }
-  return {
-    origin: new THREE.Vector3(0, 0, 0),
-    uAxis: new THREE.Vector3(0, 0, 1),
-    vAxis: new THREE.Vector3(0, 1, 0),
-    normal: new THREE.Vector3(-1, 0, 0),
-  }
+  if (plane === 'top') return { origin: new THREE.Vector3(0, SKETCH_PLANE_Y, 0), uAxis: new THREE.Vector3(1, 0, 0), vAxis: new THREE.Vector3(0, 0, -1), normal: new THREE.Vector3(0, 1, 0) }
+  if (plane === 'front') return { origin: new THREE.Vector3(0, 0, 0), uAxis: new THREE.Vector3(1, 0, 0), vAxis: new THREE.Vector3(0, 1, 0), normal: new THREE.Vector3(0, 0, 1) }
+  return { origin: new THREE.Vector3(0, 0, 0), uAxis: new THREE.Vector3(0, 0, 1), vAxis: new THREE.Vector3(0, 1, 0), normal: new THREE.Vector3(-1, 0, 0) }
 }
 
-function sketchPointToWorld(point: [number, number], frame: ReturnType<typeof sketchPlaneFrame>) {
-  return frame.origin.clone().addScaledVector(frame.uAxis, point[0]).addScaledVector(frame.vAxis, point[1])
-}
-
-function planeLocalExtrusionProfile(points: [number, number][], plane: SketchPlane): [number, number][] {
-  return points.map(([u, v]): [number, number] => (plane === 'top' ? [u, -v] : plane === 'right' ? [u, v] : [u, v]))
+function planeLocalExtrusionProfile(points: [number, number][]): [number, number][] {
+  return points.map(([u, v]): [number, number] => [u, v])
 }
 
 function arcPoints(center: [number, number], start: [number, number], end: [number, number]): [number, number][] {
@@ -252,15 +227,15 @@ const initialJoints: AssemblyJoint[] = [
 ]
 
 const workspaceCatalog = [
-  { id: 'design', label: 'Design', icon: Cuboid, description: 'Parametric solid, surface, and mesh modeling', categories: ['Solid', 'Surface', 'Mesh', 'Sheet Metal', 'Section Analysis', 'Inspect'], status: 'Working' },
-  { id: 'assemble', label: 'Assemble', icon: Layers3, description: 'Kinematic joints, exploded views, and live BOM', categories: ['Joints', 'Exploded View', 'Bill of Materials', 'Interference'], status: 'Working' },
-  { id: 'drawings', label: 'Drawings', icon: Grid2X2, description: 'ISO/ANSI 2D engineering sheets and dimensions', categories: ['Multi-View', 'Dimensions', 'Title Block', 'Export SVG'], status: 'Working' },
-  { id: 'manufacture', label: 'Manufacture', icon: Move3D, description: '2.5D CAM toolpaths, G-code, and tool simulation', categories: ['Setup', 'Toolpaths', 'G-Code', 'Simulation'], status: 'Working' },
-  { id: 'simulation', label: 'Simulation', icon: SlidersHorizontal, description: 'FEA static stress, Von Mises heatmaps, and FOS', categories: ['Static Stress', 'Loads', 'Von Mises', 'Factor of Safety'], status: 'Working' },
-  { id: 'electronics', label: 'Electronics', icon: Cpu, description: 'PCB keepouts, standoffs, and enclosure design', categories: ['Enclosure', 'Standoffs', 'Mounting', 'Keepout'], status: 'Working' },
-  { id: 'visualize', label: 'Visualize', icon: Sparkles, description: 'Engineering materials, studio lighting, and renders', categories: ['Materials', 'Studio Light', 'Camera', 'Snapshot'], status: 'Working' },
-  { id: 'manage', label: 'Manage', icon: ShieldCheck, description: 'Revisions, branches, and multi-format CAD exports', categories: ['Versions', 'STEP Export', 'STL / OBJ', 'Audit Log'], status: 'Working' },
-  { id: 'automate', label: 'Automate', icon: Code2, description: 'FeatureScript console and parametric generator', categories: ['Script Editor', 'Templates', 'API Console', 'Run'], status: 'Working' },
+  { id: 'design', label: 'Design', icon: Cuboid, description: 'Sketches, editable solid features, and mesh modeling', categories: ['Sketch', 'Extrude', 'Boolean', 'Inspect'], status: 'Prototype' },
+  { id: 'assemble', label: 'Assemble', icon: Layers3, description: 'Kinematic joints, exploded views, and live BOM', categories: ['Joints', 'Exploded View', 'Bill of Materials'], status: 'Prototype' },
+  { id: 'drawings', label: 'Drawings', icon: Grid2X2, description: '2D engineering sheets and SVG export', categories: ['Multi-View', 'Dimensions', 'SVG Export'], status: 'Prototype' },
+  { id: 'manufacture', label: 'Manufacture', icon: Move3D, description: '2.5D CAM toolpaths and G-code preview', categories: ['Setup', 'Toolpaths', 'G-Code'], status: 'Prototype' },
+  { id: 'simulation', label: 'Simulation', icon: SlidersHorizontal, description: 'Approximate static stress and factor of safety', categories: ['Static Stress', 'Loads', 'Factor of Safety'], status: 'Prototype' },
+  { id: 'electronics', label: 'Electronics', icon: Cpu, description: 'PCB enclosure layout helpers', categories: ['Enclosure', 'Standoffs', 'Keepout'], status: 'Prototype' },
+  { id: 'visualize', label: 'Visualize', icon: Sparkles, description: 'Materials, lighting, and snapshots', categories: ['Materials', 'Lighting', 'Snapshot'], status: 'Prototype' },
+  { id: 'manage', label: 'Manage', icon: ShieldCheck, description: 'Local versions and CAD exports', categories: ['Versions', 'STEP Export', 'STL / OBJ'], status: 'Prototype' },
+  { id: 'automate', label: 'Automate', icon: Code2, description: 'Script templates and parametric generators', categories: ['Script Editor', 'Templates', 'Run'], status: 'Prototype' },
 ] as const
 
 function createChamferedBoxGeometry(size: Part['size'], chamfer: number): THREE.BufferGeometry {
@@ -333,7 +308,7 @@ function createPartMesh(part: Part, selected: boolean, customGeo?: THREE.BufferG
     } else if (part.kind === 'extrusion' && part.profile) {
       const shape = new THREE.Shape()
       const plane = part.profilePlane ?? 'top'
-      const profile = planeLocalExtrusionProfile(part.profile, plane)
+      const profile = planeLocalExtrusionProfile(part.profile)
       profile.forEach(([x, y], index) => {
         if (index === 0) shape.moveTo(x, y)
         else shape.lineTo(x, y)
@@ -341,12 +316,17 @@ function createPartMesh(part: Part, selected: boolean, customGeo?: THREE.BufferG
       shape.closePath()
       const treatment = part.edgeTreatment
       geometry = new THREE.ExtrudeGeometry(shape, {
-        depth: part.size[sketchPlaneAxes(plane).normalAxis],
+        depth: part.arbitraryPlane ? part.size[2] : part.size[sketchPlaneAxes(plane).normalAxis],
         bevelEnabled: Boolean(treatment),
         bevelSegments: treatment?.type === 'fillet' ? 4 : 1,
         bevelSize: treatment?.size ?? 0,
         bevelThickness: treatment?.size ?? 0,
       })
+      if (part.arbitraryPlane) {
+        const { uAxis, vAxis, normal } = part.arbitraryPlane
+        const basis = new THREE.Matrix4().makeBasis(new THREE.Vector3(...uAxis), new THREE.Vector3(...vAxis), new THREE.Vector3(...normal))
+        geometry.applyMatrix4(basis)
+      }
     } else if (part.kind === 'box' && part.edgeTreatment?.type === 'fillet') {
       const radius = Math.min(part.edgeTreatment.size, Math.min(...part.size) * 0.45)
       geometry = new RoundedBoxGeometry(...part.size, 4, radius)
@@ -384,8 +364,10 @@ function createPartMesh(part: Part, selected: boolean, customGeo?: THREE.BufferG
   }
   if (part.kind === 'extrusion') {
     const plane = part.profilePlane ?? 'top'
-    if (plane === 'top') mesh.rotation.x = -Math.PI / 2
-    else if (plane === 'right') mesh.rotation.y = Math.PI / 2
+    if (part.arbitraryPlane) {
+      // Geometry is already oriented in the arbitrary sketch frame.
+    } else if (plane === 'top') mesh.rotation.x = -Math.PI / 2
+    else if (plane === 'right') mesh.rotation.y = -Math.PI / 2
   }
   mesh.visible = part.visible
   mesh.castShadow = true
@@ -464,11 +446,7 @@ function App() {
   const workspaceSwitcherRef = useRef<HTMLDivElement>(null)
   const viewerRef = useRef<Viewer | null>(null)
   const editingSketchRef = useRef<SketchFeature | null>(null)
-  const sketchGridRef = useRef<THREE.GridHelper | null>(null)
-  const groundRef = useRef<THREE.Mesh | null>(null)
   const sketchReturnProjectionRef = useRef<'perspective' | 'orthographic'>('perspective')
-  const sketchViewActiveRef = useRef(false)
-  const orthoFrustumSizeRef = useRef(18)
 
   const [parts, setParts] = useState<Part[]>(() => {
     try {
@@ -508,11 +486,10 @@ function App() {
   const [past, setPast] = useState<ModelSnapshot[]>([])
   const [future, setFuture] = useState<ModelSnapshot[]>([])
   const [sketchEntities, setSketchEntities] = useState<SketchEntity[]>([])
+  const [pendingSketchPoints, setPendingSketchPoints] = useState<[number, number][]>([])
   const [sketchType, setSketchType] = useState<SketchTool>('rectangle')
   const [sketchPlane, setSketchPlane] = useState<SketchPlane>('top')
   const [sketchStage, setSketchStage] = useState<SketchStage>('idle')
-  const [pendingSketchPoints, setPendingSketchPoints] = useState<[number, number][]>([])
-  const [sketchCursor, setSketchCursor] = useState<[number, number] | null>(null)
   const [extrudeDistance, setExtrudeDistance] = useState(4)
   const [showExtrudeDialog, setShowExtrudeDialog] = useState(false)
   const [solidCommand, setSolidCommand] = useState<SolidCommand | null>(null)
@@ -565,7 +542,7 @@ function App() {
 
   // Automate / FeatureScript State
   const [activeScript, setActiveScript] = useState(SCRIPT_TEMPLATES[0].code)
-  const [scriptLog, setScriptLog] = useState('CloneCad FeatureScript Engine Ready.')
+  const [scriptLog, setScriptLog] = useState('BestCad FeatureScript Engine Ready.')
 
   // Manage / Version Snapshots State
   const [versions] = useState<VersionSnapshot[]>(() => [
@@ -581,8 +558,6 @@ function App() {
   const selectedSketch = sketches.find((sketch) => sketch.id === selectedSketchId) ?? null
   const profileEntities = sketchStage === 'drawing' ? sketchEntities : selectedSketch?.entities ?? sketchEntities
   const activeProfilePlane = sketchStage === 'drawing' ? sketchPlane : selectedSketch?.plane ?? sketchPlane
-  const sketchProfile = [...profileEntities].reverse().find((entity) => entity.closed && entity.type !== 'arc') ?? null
-  const closedProfileCount = profileEntities.filter((entity) => entity.closed && entity.type !== 'arc').length
 
   const notify = useCallback((message: string) => {
     setToast(message)
@@ -600,10 +575,6 @@ function App() {
   const commitParts = useCallback((next: Part[]) => {
     commitModel({ parts: next, sketches, joints })
   }, [commitModel, joints, sketches])
-
-  const commitSketches = useCallback((next: SketchFeature[]) => {
-    commitModel({ parts, sketches: next, joints })
-  }, [commitModel, joints, parts])
 
   const saveDocument = useCallback(() => {
     try {
@@ -641,6 +612,28 @@ function App() {
     setSavedAt('Unsaved changes')
   }, [future, joints, parts, selectedId, selectedSketchId, sketches])
 
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const target = event.target
+      const editingText = target instanceof HTMLElement && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))
+      if (editingText) return
+      const command = event.ctrlKey || event.metaKey
+      if (command && event.key.toLowerCase() === 'z') {
+        event.preventDefault()
+        if (event.shiftKey) redo()
+        else undo()
+      } else if (command && event.key.toLowerCase() === 'y') {
+        event.preventDefault()
+        redo()
+      } else if (command && event.key.toLowerCase() === 's') {
+        event.preventDefault()
+        saveDocument()
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [redo, saveDocument, undo])
+
   const deleteSelected = useCallback(() => {
     if (!selectedId) return
     commitParts(parts.filter((part) => part.id !== selectedId))
@@ -649,56 +642,70 @@ function App() {
   }, [commitParts, notify, parts, selectedId])
 
   const createExtrusion = useCallback(() => {
-    if (!sketchProfile || !Number.isFinite(extrudeDistance) || extrudeDistance <= 0) {
+    if (!Number.isFinite(extrudeDistance) || extrudeDistance <= 0) {
       notify(`Choose a valid ${sketchType} profile and a positive extrusion distance`)
       return
     }
-    if (closedProfileCount !== 1) {
-      notify('Extrude currently supports one closed profile per sketch')
+    const closedProfiles = profileEntities.filter((entity) => entity.closed && entity.type !== 'arc')
+    if (!closedProfiles.length) {
+      notify('Add at least one closed profile to the sketch before extruding')
       return
     }
-    const profile = closedProfilePoints(sketchProfile)
-    if (profile.length < 3 || polygonArea(profile) <= 1e-9 || polygonHasSelfIntersection(profile)) {
-      notify('Extrude needs a valid, non-self-intersecting closed profile')
+    const profiles = closedProfiles.map((entity) => ({ entity, points: closedProfilePoints(entity) }))
+    if (profiles.some(({ points }) => points.length < 3 || polygonArea(points) <= 1e-9 || polygonHasSelfIntersection(points))) {
+      notify('Each extruded profile must be closed and non-self-intersecting')
       return
     }
-    const bounds = sketchProfileBounds(profile)
     const plane = activeProfilePlane
+    const arbitraryPlane = sketchStage === 'drawing' ? activeArbitraryPlane : selectedSketch?.arbitraryPlane ?? null
     const axes = sketchPlaneAxes(plane)
-    const size: Part['size'] = [0, 0, 0]
-    size[axes.uAxis] = bounds.width
-    size[axes.vAxis] = bounds.height
-    size[axes.normalAxis] = extrudeDistance
-    const profileType: SketchProfile =
-      sketchProfile.type === 'circle' ? 'circle' : sketchProfile.type === 'rectangle' ? 'rectangle' : 'polygon'
-    const count = parts.filter((part) => part.kind === 'extrusion').length + 1
-    const part: Part = {
-      id: `extrude-${Date.now()}`,
-      name: `${profileType === 'circle' ? 'Circular extrude' : 'Extrude'} ${count}`,
-      kind: 'extrusion',
-      profile,
-      profileType,
-      profilePlane: plane,
-      sketchId: selectedSketchId ?? undefined,
-      size,
-      position: plane === 'top' ? [0, SKETCH_PLANE_Y, 0] : [0, 0, 0],
-      color: '#78a9dc',
-      materialId: 'aluminum',
-      visible: true,
-    }
-    commitParts([...parts, part])
-    setSelectedId(part.id)
+    const firstFeatureId = `extrude-${Date.now()}`
+    const newParts = profiles.map(({ entity, points }, index): Part => {
+      const bounds = sketchProfileBounds(points)
+      const size: Part['size'] = arbitraryPlane ? [bounds.width, bounds.height, extrudeDistance] : [0, 0, 0]
+      if (!arbitraryPlane) {
+        size[axes.uAxis] = bounds.width
+        size[axes.vAxis] = bounds.height
+        size[axes.normalAxis] = extrudeDistance
+      }
+      const profileType: SketchProfile = entity.type === 'circle' ? 'circle' : entity.type === 'rectangle' ? 'rectangle' : 'polygon'
+      const count = parts.filter((part) => part.kind === 'extrusion').length + index + 1
+      return {
+        id: `${firstFeatureId}-${index + 1}`,
+        name: `${profileType === 'circle' ? 'Circular extrude' : 'Extrude'} ${count}`,
+        kind: 'extrusion',
+        profile: points,
+        profileType,
+        profilePlane: plane,
+        arbitraryPlane: arbitraryPlane ?? undefined,
+        sketchId: selectedSketchId ?? selectedSketch?.id,
+        sketchEntityId: entity.id,
+        size,
+        position: arbitraryPlane ? [...arbitraryPlane.origin] : plane === 'top' ? [0, SKETCH_PLANE_Y, 0] : [0, 0, 0],
+        color: '#78a9dc',
+        materialId: 'aluminum',
+        visible: true,
+      }
+    })
+    commitParts([...parts, ...newParts])
+    setSelectedId(newParts[0].id)
     setSelectedSketchId(null)
     setSketchEntities([])
     setSketchStage('idle')
     setShowExtrudeDialog(false)
-    notify(`${part.name} created from Sketch ${count}`)
-  }, [activeProfilePlane, closedProfileCount, commitParts, extrudeDistance, notify, parts, selectedSketchId, sketchProfile, sketchType])
+    notify(`Created ${newParts.length} extruded ${newParts.length === 1 ? 'profile' : 'profiles'}`)
+  }, [activeArbitraryPlane, activeProfilePlane, commitParts, extrudeDistance, notify, parts, profileEntities, selectedSketch, selectedSketchId, sketchStage, sketchType])
 
   function deleteSelectedSketch(sketchId: string) {
-    commitSketches(sketches.filter((s) => s.id !== sketchId))
+    const dependentParts = parts.filter((part) => part.sketchId === sketchId)
+    commitModel({
+      parts: dependentParts.length ? parts.filter((part) => part.sketchId !== sketchId) : parts,
+      sketches: sketches.filter((sketch) => sketch.id !== sketchId),
+      joints,
+    })
+    if (dependentParts.some((part) => part.id === selectedId)) setSelectedId(null)
     if (selectedSketchId === sketchId) setSelectedSketchId(null)
-    notify('Sketch deleted')
+    notify(dependentParts.length ? `Sketch and ${dependentParts.length} dependent feature${dependentParts.length === 1 ? '' : 's'} deleted` : 'Sketch deleted')
   }
 
   function startSketch(profileType: SketchTool = 'rectangle') {
@@ -706,9 +713,8 @@ function App() {
     sketchReturnProjectionRef.current = cameraProjection
     setSelectedSketchId(null)
     setSketchEntities([])
-    setSketchType(profileType)
     setPendingSketchPoints([])
-    setSketchCursor(null)
+    setSketchType(profileType)
     setShowExtrudeDialog(false)
     setSolidCommand(null)
     setActiveArbitraryPlane(null)
@@ -722,54 +728,84 @@ function App() {
     setActiveArbitraryPlane(null)
     setHoveredFacePlane(null)
     setSketchPlane(plane)
-    sketchViewActiveRef.current = true
     setCameraProjection('orthographic')
     setSketchStage('drawing')
     notify(`Sketching on ${plane} plane · choose a tool, then click to draw`)
   }
 
   function finishSketch() {
-    if (sketchEntities.length === 0) {
-      notify('Draw at least one entity before finishing the sketch')
-      return
-    }
-
-    const editingSketch = editingSketchRef.current
+    if (!sketchEntities.length) { notify('Draw a profile before finishing the sketch'); return }
+    const previous = editingSketchRef.current
     const feature: SketchFeature = {
-      id: editingSketch?.id ?? createFeatureId('sketch'),
-      name: editingSketch?.name ?? `Sketch ${sketches.length + 1}`,
+      id: previous?.id ?? createFeatureId('sketch'),
+      name: previous?.name ?? `Sketch ${sketches.length + 1}`,
       plane: sketchPlane,
       arbitraryPlane: activeArbitraryPlane ?? undefined,
       entities: sketchEntities,
-      visible: editingSketch?.visible ?? true,
+      visible: previous?.visible ?? true,
     }
-    const nextSketches = editingSketch
-      ? sketches.map((sketch) => (sketch.id === editingSketch.id ? feature : sketch))
-      : [...sketches, feature]
-
-    commitSketches(nextSketches)
+    const nextSketches = previous ? sketches.map((item) => item.id === previous.id ? feature : item) : [...sketches, feature]
+    let nextParts = parts
+    if (previous) {
+      const regenerated = new Map<string, Part>()
+      for (const part of parts.filter((item) => item.sketchId === previous.id && item.sketchEntityId)) {
+        const source = feature.entities.find((entity) => entity.id === part.sketchEntityId)
+        if (!source || !source.closed || source.type === 'arc') {
+          notify(`Cannot finish: ${part.name} needs its closed source profile`)
+          return
+        }
+        const profile = closedProfilePoints(source)
+        if (profile.length < 3 || polygonArea(profile) <= 1e-9 || polygonHasSelfIntersection(profile)) {
+          notify(`Cannot finish: ${part.name} source profile is invalid`)
+          return
+        }
+        const bounds = sketchProfileBounds(profile)
+        const size: Part['size'] = [...part.size]
+        const depthAxis = part.arbitraryPlane ? 2 : sketchPlaneAxes(feature.plane).normalAxis
+        const depth = part.size[depthAxis]
+        if (part.arbitraryPlane) {
+          size[0] = bounds.width
+          size[1] = bounds.height
+          size[2] = depth
+        } else {
+          const axes = sketchPlaneAxes(feature.plane)
+          size[axes.uAxis] = bounds.width
+          size[axes.vAxis] = bounds.height
+          size[axes.normalAxis] = depth
+        }
+        regenerated.set(part.id, {
+          ...part,
+          profile,
+          profileType: source.type === 'circle' ? 'circle' : source.type === 'rectangle' ? 'rectangle' : 'polygon',
+          profilePlane: feature.plane,
+          arbitraryPlane: feature.arbitraryPlane,
+          position: feature.arbitraryPlane ? [...feature.arbitraryPlane.origin] : feature.plane === 'top' ? [0, SKETCH_PLANE_Y, 0] : [0, 0, 0],
+          size,
+        })
+      }
+      if (regenerated.size) nextParts = parts.map((part) => regenerated.get(part.id) ?? part)
+    }
+    commitModel({ parts: nextParts, sketches: nextSketches, joints })
     setSelectedSketchId(feature.id)
     setSelectedId(null)
     editingSketchRef.current = null
-    setSketchEntities([])
     setPendingSketchPoints([])
-    setSketchCursor(null)
+    setSketchEntities([])
     setActiveArbitraryPlane(null)
     setSketchStage('idle')
     setCameraProjection(sketchReturnProjectionRef.current)
-    notify(`${feature.name} saved`)
+    notify(`${feature.name} saved · ready for 3D features`)
   }
 
   function cancelSketch() {
-    const wasDrawing = sketchStage === 'drawing'
+    const returnProjection = sketchReturnProjectionRef.current
     editingSketchRef.current = null
-    setSketchEntities([])
     setPendingSketchPoints([])
-    setSketchCursor(null)
+    setSketchEntities([])
     setActiveArbitraryPlane(null)
     setHoveredFacePlane(null)
     setSketchStage('idle')
-    if (wasDrawing) setCameraProjection(sketchReturnProjectionRef.current)
+    setCameraProjection(returnProjection)
   }
 
   function editSketch(sketch: SketchFeature) {
@@ -779,10 +815,8 @@ function App() {
     setActiveArbitraryPlane(sketch.arbitraryPlane ?? null)
     setSketchEntities(sketch.entities)
     setPendingSketchPoints([])
-    setSketchCursor(null)
     setSelectedSketchId(sketch.id)
     setSelectedId(null)
-    sketchViewActiveRef.current = true
     setCameraProjection('orthographic')
     setSketchStage('drawing')
   }
@@ -790,7 +824,18 @@ function App() {
   function chooseSketchTool(tool: SketchTool) {
     setSketchType(tool)
     setPendingSketchPoints([])
-    setSketchCursor(null)
+  }
+
+  function addSketchPoint(point: [number, number]) {
+    if (sketchType === 'select' || sketchType === 'trim' || sketchType === 'offset' || sketchType === 'dimension') return
+    const required = sketchType === 'arc' ? 3 : 2
+    const next = [...pendingSketchPoints, point]
+    if (next.length < required) { setPendingSketchPoints(next); return }
+    const type = sketchType === 'line' ? 'line' : sketchType === 'circle' ? 'circle' : sketchType === 'arc' ? 'arc' : 'rectangle'
+    const closed = type === 'circle' || type === 'rectangle'
+    const entity: SketchEntity = { id: createFeatureId('entity'), type, points: next, closed }
+    setSketchEntities((items) => [...items, entity])
+    setPendingSketchPoints([])
   }
 
   function addPart(kind: Primitive, options?: { name: string; size: [number, number, number]; position: [number, number, number]; color: string }) {
@@ -827,10 +872,8 @@ function App() {
 
   function openSolidCommand(command: SolidCommand) {
     if (command === 'revolve') {
-      if (!selectedSketch || !sketchProfile) {
-        notify('Select a saved sketch with a closed profile before revolving')
-        return
-      }
+      notify('Revolve is not implemented yet; use Extrude for sketch-based solid features')
+      return
     } else if (command === 'combine') {
       if (!selectedPart || parts.filter((p) => p.id !== selectedPart.id).length === 0) {
         notify('Select a target body and create another body to combine')
@@ -904,11 +947,64 @@ function App() {
       notify(`${solidCommand === 'fillet' ? 'Fillet' : 'Chamfer'} applied`)
       return
     }
+    if (solidCommand === 'hole' || solidCommand === 'shell') {
+      if (!selectedPart || !Number.isFinite(operationValue) || operationValue <= 0) return
+      let tool: Part
+      if (solidCommand === 'hole') {
+        const diameter = operationValue
+        const span = Math.max(...selectedPart.size) * 3
+        tool = {
+          id: `hole-tool-${Date.now()}`, name: 'Hole tool', kind: 'cylinder',
+          size: [diameter, span, diameter], position: [...selectedPart.position],
+          color: '#ffffff', visible: true,
+        }
+      } else {
+        if (!['box', 'cylinder', 'sphere'].includes(selectedPart.kind)) {
+          notify('Shell currently supports box, cylinder, and sphere bodies')
+          return
+        }
+        const wall = operationValue
+        const innerSize: Part['size'] = selectedPart.kind === 'sphere'
+          ? [selectedPart.size[0] - wall * 2, selectedPart.size[1] - wall * 2, selectedPart.size[2] - wall * 2]
+          : selectedPart.kind === 'cylinder'
+            ? [selectedPart.size[0] - wall * 2, selectedPart.size[1] - wall, selectedPart.size[2] - wall * 2]
+            : [selectedPart.size[0] - wall * 2, selectedPart.size[1] - wall * 2, selectedPart.size[2] - wall * 2]
+        if (innerSize.some((dimension) => dimension <= 0)) {
+          notify('Wall thickness is too large for this body')
+          return
+        }
+        tool = { ...selectedPart, id: `shell-tool-${Date.now()}`, name: 'Shell cavity', size: innerSize, color: '#ffffff' }
+      }
+      try {
+        const result = await createCsgResult(selectedPart, tool, 'subtract', solidCommand === 'hole' ? operationAxis : undefined)
+        const updated: Part = {
+          ...selectedPart,
+          name: solidCommand === 'hole' ? `${selectedPart.name} · hole` : `${selectedPart.name} · shell`,
+          kind: 'custom',
+          meshData: result.meshData,
+          size: result.size,
+          position: result.position,
+          operation: solidCommand === 'hole' ? `Hole Ø${operationValue} mm` : `Shell ${operationValue} mm`,
+        }
+        commitParts(parts.map((part) => part.id === selectedPart.id ? updated : part))
+        setSolidCommand(null)
+        notify(`${solidCommand === 'hole' ? 'Hole' : 'Shell'} feature applied`)
+      } catch {
+        notify(`${solidCommand === 'hole' ? 'Hole' : 'Shell'} failed; check the body and feature dimensions`)
+      }
+      return
+    }
     if (solidCommand === 'combine') {
       const tool = parts.find((p) => p.id === operationToolId)
       if (!selectedPart || !tool) return
       const op = combineMode === 'join' ? 'add' : combineMode === 'cut' ? 'subtract' : 'intersect'
-      const result = await createCsgResult(selectedPart, tool, op)
+      let result: Awaited<ReturnType<typeof createCsgResult>>
+      try {
+        result = await createCsgResult(selectedPart, tool, op)
+      } catch {
+        notify('Combine failed; check that the bodies overlap and form valid solids')
+        return
+      }
       const combined: Part = {
         ...selectedPart,
         name: `${selectedPart.name} · ${combineMode}`,
@@ -1235,6 +1331,93 @@ function App() {
   useEffect(() => {
     const viewer = viewerRef.current
     if (!viewer) return
+    if (sketchStage !== 'drawing') { viewer.controls.enabled = true; return }
+    const frame = sketchPlaneFrame(sketchPlane, activeArbitraryPlane ?? undefined)
+    const target = frame.origin
+    viewer.controls.enabled = false
+    viewer.controls.target.copy(target)
+    viewer.camera.position.copy(target).addScaledVector(frame.normal, 18)
+    viewer.camera.up.copy(frame.vAxis)
+    viewer.camera.lookAt(target)
+    viewer.controls.update()
+  }, [activeArbitraryPlane, cameraProjection, sketchPlane, sketchStage])
+
+  useEffect(() => {
+    const viewer = viewerRef.current
+    if (!viewer) return
+    viewer.sketch.clear()
+    const active = sketchStage === 'drawing'
+      ? [{ plane: sketchPlane, arbitraryPlane: activeArbitraryPlane ?? undefined, entities: sketchEntities, visible: true }]
+      : sketches.filter((item) => item.visible && (item.id === selectedSketchId || parts.some((part) => part.sketchId === item.id)))
+    if (sketchStage === 'drawing') {
+      const frame = sketchPlaneFrame(sketchPlane, activeArbitraryPlane ?? undefined)
+      const grid = new THREE.GridHelper(24, 24, '#58705f', '#34443a')
+      grid.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), frame.normal)
+      grid.position.copy(frame.origin).addScaledVector(frame.normal, -0.015)
+      viewer.sketch.add(grid)
+      pendingSketchPoints.forEach(([u, v]) => {
+        const marker = new THREE.Mesh(new THREE.SphereGeometry(0.07, 10, 8), new THREE.MeshBasicMaterial({ color: '#ffbd63', depthTest: false }))
+        marker.position.copy(frame.origin).addScaledVector(frame.uAxis, u).addScaledVector(frame.vAxis, v).addScaledVector(frame.normal, 0.025)
+        marker.renderOrder = 11
+        viewer.sketch.add(marker)
+      })
+    }
+    active.forEach((sketch) => {
+      const frame = sketchPlaneFrame(sketch.plane, sketch.arbitraryPlane)
+      sketch.entities.forEach((entity) => {
+        const points = sketchEntityPoints(entity)
+        if (points.length < 2) return
+        const positions: number[] = []
+        points.forEach(([u, v]) => {
+          const world = frame.origin.clone().addScaledVector(frame.uAxis, u).addScaledVector(frame.vAxis, v).addScaledVector(frame.normal, 0.01)
+          positions.push(world.x, world.y, world.z)
+        })
+        const geometry = new THREE.BufferGeometry()
+        geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+        const line = new THREE.Line(geometry, new THREE.LineBasicMaterial({ color: sketchStage === 'drawing' ? '#76e7a5' : '#ffad48', depthTest: false }))
+        line.renderOrder = 10
+        viewer.sketch.add(line)
+      })
+    })
+    return () => {
+      viewer.sketch.traverse((object) => {
+        if (object instanceof THREE.Line || object instanceof THREE.Mesh) {
+          object.geometry.dispose()
+          const material = object.material
+          if (Array.isArray(material)) material.forEach((item) => item.dispose())
+          else material.dispose()
+        }
+      })
+      viewer.sketch.clear()
+    }
+  }, [activeArbitraryPlane, parts, pendingSketchPoints, selectedSketchId, sketchEntities, sketchPlane, sketchStage, sketches])
+
+  useEffect(() => {
+    if (sketchStage !== 'drawing') return
+    const host = viewportRef.current
+    const viewer = viewerRef.current
+    if (!host || !viewer) return
+    const raycaster = new THREE.Raycaster()
+    const mouse = new THREE.Vector2()
+    const frame = sketchPlaneFrame(sketchPlane, activeArbitraryPlane ?? undefined)
+    const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(frame.normal, frame.origin)
+    const handlePointerDown = (event: PointerEvent) => {
+      if (event.button !== 0) return
+      const rect = host.getBoundingClientRect()
+      mouse.set(((event.clientX - rect.left) / rect.width) * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1)
+      raycaster.setFromCamera(mouse, viewer.camera)
+      const world = raycaster.ray.intersectPlane(plane, new THREE.Vector3())
+      if (!world) return
+      event.preventDefault()
+      addSketchPoint([Number(world.clone().sub(frame.origin).dot(frame.uAxis).toFixed(3)), Number(world.clone().sub(frame.origin).dot(frame.vAxis).toFixed(3))])
+    }
+    host.addEventListener('pointerdown', handlePointerDown)
+    return () => host.removeEventListener('pointerdown', handlePointerDown)
+  }, [activeArbitraryPlane, pendingSketchPoints, sketchPlane, sketchStage, sketchType])
+
+  useEffect(() => {
+    const viewer = viewerRef.current
+    if (!viewer) return
 
     while (viewer.parts.children.length > 0) {
       const child = viewer.parts.children[0]
@@ -1516,7 +1699,7 @@ function App() {
                       <strong>{label}</strong>
                       <small>{description}</small>
                     </span>
-                    <span className="workspace-status available">{status}</span>
+                    <span className="workspace-status">{status}</span>
                   </button>
                 ))}
               </div>
@@ -1525,9 +1708,9 @@ function App() {
           <span className="fusion-workspace-divider" />
           <div className="workspace-categories">
             {currentWorkspace.categories.map((cat, i) => (
-              <button key={cat} className={`workspace-category ${i === 0 ? 'active' : ''}`}>
+              <span key={cat} className={`workspace-category ${i === 0 ? 'active' : ''}`}>
                 {cat}
-              </button>
+              </span>
             ))}
           </div>
         </div>
@@ -1629,7 +1812,7 @@ function App() {
         </div>
       )}
 
-      {/* ── Sketch Drawing Ribbon with Constraint Solver ─────────────────── */}
+      {/* Sketch editing tools */}
       {activeWorkspace === 'design' && sketchStage === 'drawing' && (
         <div className="solid-ribbon" style={{ background: '#1b2a1b', borderBottom: '1px solid #3a7a3a' }}>
           <div className="solid-ribbon-tab" style={{ color: '#7ec87e', borderColor: '#5aad5a' }}>
@@ -1638,56 +1821,22 @@ function App() {
           </div>
           <span className="solid-ribbon-divider" />
 
-          {/* Constraint Buttons */}
           <div className="solid-ribbon-tools">
-            <span style={{ fontSize: 10, color: '#6b7a6b', paddingRight: 4 }}>CONSTRAIN:</span>
-            {(['horizontal', 'vertical', 'coincident', 'parallel', 'perpendicular', 'equal_length', 'tangent'] as CoupledConstraintType[]).map((ct) => (
-              <button
-                key={ct}
-                onClick={() => triggerConstraint(ct)}
-                style={{ color: pendingConstraintType === ct ? '#7ec87e' : '#c1cad5', borderColor: pendingConstraintType === ct ? '#5aad5a' : 'transparent' }}
-                title={ct.replace(/_/g, ' ')}
-              >
-                <span style={{ fontSize: 10, fontWeight: 600 }}>
-                  {ct === 'horizontal' ? 'H' : ct === 'vertical' ? 'V' : ct === 'coincident' ? '⊙' : ct === 'parallel' ? '∥' : ct === 'perpendicular' ? '⊥' : ct === 'equal_length' ? '=' : '◯T'}
-                </span>
-                <span>{ct.replace(/_/g, ' ')}</span>
+            <span style={{ fontSize: 10, color: '#9ab99a' }}>DRAW:</span>
+            {(['select', 'line', 'rectangle', 'circle', 'arc'] as SketchTool[]).map((tool) => (
+              <button key={tool} onClick={() => chooseSketchTool(tool)} style={{ color: sketchType === tool ? '#8be2a5' : '#c1cad5', borderBottom: sketchType === tool ? '2px solid #70c887' : '2px solid transparent' }}>
+                {tool === 'rectangle' ? <Square size={14} /> : tool === 'circle' ? <Circle size={14} /> : tool === 'line' ? <Ruler size={14} /> : tool === 'arc' ? <Rotate3D size={14} /> : <Search size={14} />}
+                <span>{tool[0].toUpperCase() + tool.slice(1)}</span>
               </button>
             ))}
-            <button
-              onClick={() => triggerConstraint('distance')}
-              style={{ color: pendingConstraintType === 'distance' ? '#ffad48' : '#c1cad5' }}
-              title="Distance Dimension"
-            >
-              <Ruler size={14} /><span>Dimension</span>
-            </button>
-            <span className="solid-ribbon-divider" />
-            <button onClick={clearAllConstraints} style={{ color: '#e07070' }} title="Clear all constraints">
-              <X size={13} /><span>Clear</span>
-            </button>
+            <span style={{ fontSize: 10, color: '#8b9b8b', padding: '0 6px' }}>{sketchType === 'select' ? 'Select a drawing tool' : sketchType === 'line' ? 'Click two endpoints' : sketchType === 'arc' ? 'Click center, start, end' : sketchType === 'circle' ? 'Click center, then radius' : 'Click two corners'}</span>
+            <button className="subtle-button" onClick={cancelSketch}><X size={13} /> Cancel</button>
+            <button className="primary-button" onClick={finishSketch}><Save size={13} /> Finish Sketch</button>
           </div>
           <span className="solid-ribbon-divider" />
 
-          {/* DOF Live Diagnostic HUD */}
           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8, paddingRight: 10 }}>
-            {solverDiagnostics ? (
-              <span style={{
-                fontSize: 11,
-                fontWeight: 700,
-                padding: '3px 10px',
-                borderRadius: 4,
-                background: solverDiagnostics.status === 'fully_defined' ? '#1a3a1a' : solverDiagnostics.status === 'over_defined' ? '#3a1a1a' : '#2a2a1a',
-                color: solverDiagnostics.status === 'fully_defined' ? '#7ec87e' : solverDiagnostics.status === 'over_defined' ? '#e07070' : '#ffad48',
-                border: `1px solid ${solverDiagnostics.status === 'fully_defined' ? '#3a7a3a' : solverDiagnostics.status === 'over_defined' ? '#7a3a3a' : '#6a5a1a'}`,
-              }}>
-                {solverDiagnostics.status === 'fully_defined' && '✅ Fully Defined'}
-                {solverDiagnostics.status === 'over_defined' && '⛔ Over-Defined'}
-                {solverDiagnostics.status === 'under_defined' && `⚠ Under-Defined · ${solverDiagnostics.dof} DOF`}
-                {' '}<span style={{ opacity: 0.6, fontWeight: 400 }}>ε={solverDiagnostics.residual.toFixed(4)}</span>
-              </span>
-            ) : (
-              <span style={{ fontSize: 11, color: '#6b7a6b' }}>No constraints · {sketchEntities.length} entities</span>
-            )}
+            <span style={{ fontSize: 11, color: '#8b9b8b' }}>{sketchEntities.length} entities</span>
             <span style={{ fontSize: 10, color: '#5a7a5a' }}>
               {activeArbitraryPlane ? `📐 ${activeArbitraryPlane.name}` : `📐 ${activeProfilePlane.toUpperCase()} plane`}
             </span>
@@ -1762,8 +1911,7 @@ function App() {
                 key={sk.id}
                 className={`feature-row feature-selectable ${selectedSketchId === sk.id ? 'selected' : ''}`}
                 onClick={() => {
-                  setSelectedSketchId(sk.id)
-                  setSelectedId(null)
+                  editSketch(sk)
                 }}
               >
                 <span className="feature-icon sketch-icon">
@@ -2141,6 +2289,30 @@ function App() {
                     />
                   </label>
                 )}
+                {(solidCommand === 'hole' || solidCommand === 'shell') && (
+                  <>
+                    <label>
+                      {solidCommand === 'hole' ? 'Hole diameter (mm):' : 'Wall thickness (mm):'}
+                      <input
+                        type="number"
+                        step="0.1"
+                        min="0.1"
+                        value={operationValue}
+                        onChange={(e) => setOperationValue(Number(e.target.value))}
+                      />
+                    </label>
+                    {solidCommand === 'hole' && (
+                      <label>
+                        Hole axis:
+                        <select value={operationAxis} onChange={(e) => setOperationAxis(e.target.value as 'x' | 'y' | 'z')}>
+                          <option value="x">X axis</option>
+                          <option value="y">Y axis</option>
+                          <option value="z">Z axis</option>
+                        </select>
+                      </label>
+                    )}
+                  </>
+                )}
                 {solidCommand === 'combine' && (
                   <>
                     <label>
@@ -2343,7 +2515,7 @@ function App() {
           <div className="automate-header">
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <Code2 size={16} color="#ffad48" />
-              <strong>CloneCad FeatureScript & Automation IDE</strong>
+              <strong>BestCad FeatureScript & Automation IDE</strong>
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
               <button className="subtle-button" onClick={() => setActiveWorkspace('design')}>
@@ -2387,7 +2559,7 @@ function App() {
       {/* Footer Status */}
       <footer className="app-footer">
         <span>
-          <span className="green-dot" /> CloneCad Core Kernel Operational
+          <span className="green-dot" /> BestCad 3D Workspace
         </span>
         <span className="footer-spacer" />
         <button onClick={captureRenderSnapshot}>
