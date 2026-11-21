@@ -567,6 +567,7 @@ function App() {
   const [future, setFuture] = useState<ModelSnapshot[]>([])
   const [sketchEntities, setSketchEntities] = useState<SketchEntity[]>([])
   const [selectedSketchEntityId, setSelectedSketchEntityId] = useState<string | null>(null)
+  const [relatedSketchEntityId, setRelatedSketchEntityId] = useState<string | null>(null)
   const [sketchConstraints, setSketchConstraints] = useState<SketchConstraint[]>([])
   const [dimensionPointRefs, setDimensionPointRefs] = useState<{ entityId: string; pointIndex: number }[]>([])
   const [dimensionValue, setDimensionValue] = useState(0)
@@ -784,6 +785,23 @@ function App() {
     setSavedAt('Unsaved changes')
   }, [future, joints, parts, selectedId, selectedSketchId, sketches, setJoints, setParts, setPast, setSavedAt, setSelectedId, setSelectedSketchId, setFuture])
 
+  const appendSketchEntity = useCallback((entity: SketchEntity) => {
+    const relations: SketchConstraint[] = []
+    entity.points.forEach((point, pointIndex) => {
+      let nearest: { entity: SketchEntity; pointIndex: number; distance: number } | null = null
+      for (const other of sketchEntities) {
+        for (let otherPointIndex = 0; otherPointIndex < other.points.length; otherPointIndex++) {
+          const candidate = other.points[otherPointIndex]
+          const distance = Math.hypot(point[0] - candidate[0], point[1] - candidate[1])
+          if (distance < 0.24 && (!nearest || distance < nearest.distance)) nearest = { entity: other, pointIndex: otherPointIndex, distance }
+        }
+      }
+      if (nearest) relations.push({ id: createFeatureId('constraint'), type: 'coincident', entityIds: [entity.id, nearest.entity.id], pointIndices: [pointIndex, nearest.pointIndex] })
+    })
+    setSketchEntities((items) => [...items, entity])
+    if (relations.length) setSketchConstraints((items) => [...items, ...relations])
+  }, [sketchEntities])
+
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       const target = event.target
@@ -797,7 +815,7 @@ function App() {
         event.preventDefault()
         const minimumPoints = sketchType === 'spline' ? 3 : 2
         if (pendingSketchPoints.length >= minimumPoints) {
-          setSketchEntities((items) => [...items, { id: createFeatureId('entity'), type: sketchType === 'spline' ? 'spline' : 'line', points: pendingSketchPoints, closed: false, isConstruction: constructionMode }])
+          appendSketchEntity({ id: createFeatureId('entity'), type: sketchType === 'spline' ? 'spline' : 'line', points: pendingSketchPoints, closed: false, isConstruction: constructionMode })
           setPendingSketchPoints([])
         }
       } else if (command && event.key.toLowerCase() === 'z') {
@@ -824,7 +842,7 @@ function App() {
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [constructionMode, exportDocumentFile, pendingSketchPoints, redo, saveDocument, selectedSketchEntityId, setSketchConstraints, setSketchEntities, setSelectedSketchEntityId, sketchStage, sketchType, undo])
+  }, [appendSketchEntity, constructionMode, exportDocumentFile, pendingSketchPoints, redo, saveDocument, selectedSketchEntityId, setSketchConstraints, setSketchEntities, setSelectedSketchEntityId, sketchStage, sketchType, undo])
 
   const deleteSelected = useCallback(() => {
     if (!selectedId) return
@@ -1043,6 +1061,7 @@ function App() {
     setSketchType(tool)
     setPendingSketchPoints([])
     setSketchCursorPoint(null)
+    setRelatedSketchEntityId(null)
     setDimensionPointRefs([])
   }
 
@@ -1050,7 +1069,7 @@ function App() {
     if (sketchType === 'select' || sketchType === 'trim' || sketchType === 'offset' || sketchType === 'dimension') return
     if (sketchType === 'polyline') {
       if (pendingSketchPoints.length >= 3 && Math.hypot(pendingSketchPoints[0][0] - point[0], pendingSketchPoints[0][1] - point[1]) <= 0.35) {
-        setSketchEntities((items) => [...items, { id: createFeatureId('entity'), type: 'line', points: pendingSketchPoints, closed: true, isConstruction: constructionMode }])
+        appendSketchEntity({ id: createFeatureId('entity'), type: 'line', points: pendingSketchPoints, closed: true, isConstruction: constructionMode })
         setPendingSketchPoints([])
         return
       }
@@ -1073,14 +1092,14 @@ function App() {
       const relation = Math.abs(dy) <= Math.abs(dx) * 0.025 ? 'horizontal' : Math.abs(dx) <= Math.abs(dy) * 0.025 ? 'vertical' : null
       if (relation === 'horizontal') entity.points[1] = [second[0], first[1]]
       if (relation === 'vertical') entity.points[1] = [first[0], second[1]]
-      setSketchEntities((items) => [...items, entity])
+      appendSketchEntity(entity)
       if (relation && !constructionMode) {
         setSketchConstraints((items) => [...items, { id: createFeatureId('constraint'), type: relation, entityIds: [entity.id] }])
         setConstraintMessage(`Automatic ${relation} relation added`)
       }
-    } else setSketchEntities((items) => [...items, entity])
+    } else appendSketchEntity(entity)
     setPendingSketchPoints([])
-  }, [constructionMode, pendingSketchPoints, polygonSides, sketchType])
+  }, [appendSketchEntity, constructionMode, pendingSketchPoints, polygonSides, sketchType])
 
   const snapSketchPoint = useCallback((point: [number, number], bypass: boolean): [number, number] => {
     if (bypass || !sketchSnapEnabled) return point
@@ -1186,6 +1205,21 @@ function App() {
     setSketchEntities(result.solvedEntities)
     setSketchConstraints(nextConstraints)
     setConstraintMessage(`${type} relation ${existing ? 'removed' : 'applied'}`)
+  }
+
+  function toggleSelectedPairRelation(type: 'parallel' | 'perpendicular' | 'equal_length') {
+    const first = sketchEntities.find((item) => item.id === selectedSketchEntityId)
+    const second = sketchEntities.find((item) => item.id === relatedSketchEntityId)
+    if (!first || !second || first.id === second.id || first.type !== 'line' || second.type !== 'line') return
+    const existing = sketchConstraints.find((constraint) => constraint.type === type && constraint.entityIds.includes(first.id) && constraint.entityIds.includes(second.id))
+    const nextConstraints = existing
+      ? sketchConstraints.filter((constraint) => constraint.id !== existing.id)
+      : [...sketchConstraints, { id: createFeatureId('constraint'), type, entityIds: [first.id, second.id] }]
+    const result = solveCoupledConstraints(sketchEntities, nextConstraints)
+    if (!result.diagnostics.converged) { notify(`Could not apply ${type.replace('_', ' ')} relation`); return }
+    setSketchEntities(result.solvedEntities)
+    setSketchConstraints(nextConstraints)
+    setConstraintMessage(`${type.replace('_', ' ')} relation ${existing ? 'removed' : 'applied'}`)
   }
 
   function toggleSelectedFix() {
@@ -2161,7 +2195,12 @@ function App() {
           .map((entity) => ({ entity, distance: sketchEntityDistance(entity, localPoint) }))
           .filter((item) => item.distance <= 0.35)
           .sort((a, b) => a.distance - b.distance)[0]?.entity
+        if (event.shiftKey && selectedSketchEntityId && candidate && candidate.id !== selectedSketchEntityId) {
+          setRelatedSketchEntityId(candidate.id)
+          return
+        }
         setSelectedSketchEntityId(candidate?.id ?? null)
+        setRelatedSketchEntityId(null)
         if (!candidate) return
         const start = localPoint
         const pointerId = event.pointerId
@@ -2196,7 +2235,7 @@ function App() {
       host.removeEventListener('pointerdown', handlePointerDown)
       host.removeEventListener('pointermove', handlePointerMove)
     }
-  }, [activeArbitraryPlane, addDimensionPoint, addSketchPoint, dimensionPointRefs, notify, pendingSketchPoints, sketchConstraints, sketchEntities, sketchPlane, sketchSnapEnabled, sketchStage, sketchType, snapSketchPoint, trimSketchAt])
+  }, [activeArbitraryPlane, addDimensionPoint, addSketchPoint, dimensionPointRefs, notify, pendingSketchPoints, selectedSketchEntityId, sketchConstraints, sketchEntities, sketchPlane, sketchSnapEnabled, sketchStage, sketchType, snapSketchPoint, trimSketchAt])
 
   useEffect(() => {
     const viewer = viewerRef.current
@@ -2645,11 +2684,18 @@ function App() {
               <button className="subtle-button" onClick={() => toggleSelectedLineRelation('horizontal')}>Horizontal</button>
               <button className="subtle-button" onClick={() => toggleSelectedLineRelation('vertical')}>Vertical</button>
             </>}
+            {relatedSketchEntityId && <>
+              <span style={{ fontSize: 10, color: '#9ab99a' }}>2 lines selected</span>
+              <button className="subtle-button" onClick={() => toggleSelectedPairRelation('parallel')}>Parallel</button>
+              <button className="subtle-button" onClick={() => toggleSelectedPairRelation('perpendicular')}>Perpendicular</button>
+              <button className="subtle-button" onClick={() => toggleSelectedPairRelation('equal_length')}>Equal</button>
+              <button className="subtle-button" onClick={() => setRelatedSketchEntityId(null)}>Clear pair</button>
+            </>}
             {selectedSketchEntityId && <button className="subtle-button" onClick={toggleSelectedFix}>{sketchConstraints.some((constraint) => constraint.type === 'fixed' && constraint.entityIds[0] === selectedSketchEntityId) ? 'Unfix' : 'Fix'}</button>}
             <button className="subtle-button" onClick={() => setSketchSnapEnabled((enabled) => !enabled)} title="Snap to 0.5 mm grid and nearby sketch points">
               {sketchSnapEnabled ? 'Snap 0.5 mm: on' : 'Snap: off'}
             </button>
-            <span style={{ fontSize: 10, color: '#8b9b8b', padding: '0 6px' }}>{sketchType === 'select' ? 'Click an entity to select · drag to move' : sketchType === 'line' ? 'Click two endpoints' : sketchType === 'polyline' ? 'Click points · click start to close · Enter to finish' : sketchType === 'spline' ? 'Click control points · Enter to finish (3+ points)' : sketchType === 'arc' ? 'Click center, start, end' : sketchType === 'circle' ? 'Click center, then radius' : sketchType === 'ellipse' ? 'Click center, major axis, minor axis' : sketchType === 'polygon' ? 'Click center, then radius' : sketchType === 'slot' ? 'Click end centers, then slot radius' : sketchType === 'trim' ? 'Click an open line segment to trim at intersection' : sketchType === 'offset' ? 'Select a curve, set distance, apply' : sketchType === 'dimension' ? 'Click two points (circle center + edge for radius)' : 'Click two corners'}{!['select', 'dimension', 'trim', 'offset'].includes(sketchType) ? ' · Shift bypasses snap' : ''}</span>
+            <span style={{ fontSize: 10, color: '#8b9b8b', padding: '0 6px' }}>{sketchType === 'select' ? 'Click to select/drag · Shift-click a second line for relations' : sketchType === 'line' ? 'Click two endpoints' : sketchType === 'polyline' ? 'Click points · click start to close · Enter to finish' : sketchType === 'spline' ? 'Click control points · Enter to finish (3+ points)' : sketchType === 'arc' ? 'Click center, start, end' : sketchType === 'circle' ? 'Click center, then radius' : sketchType === 'ellipse' ? 'Click center, major axis, minor axis' : sketchType === 'polygon' ? 'Click center, then radius' : sketchType === 'slot' ? 'Click end centers, then slot radius' : sketchType === 'trim' ? 'Click an open line segment to trim at intersection' : sketchType === 'offset' ? 'Select a curve, set distance, apply' : sketchType === 'dimension' ? 'Click two points (circle center + edge for radius)' : 'Click two corners'}{!['select', 'dimension', 'trim', 'offset'].includes(sketchType) ? ' · Shift bypasses snap' : ''}</span>
             {sketchType === 'select' && selectedSketchEntityId && <button className="subtle-button" onClick={deleteSelectedSketchEntity}><Trash2 size={13} /> Delete entity</button>}
             {sketchType === 'dimension' && dimensionPointRefs.length === 2 && (
               <>
