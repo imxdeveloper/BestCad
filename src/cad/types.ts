@@ -5,7 +5,7 @@ export type PartKind = Primitive | 'extrusion' | 'revolution' | 'custom'
 export type StandardPlaneId = 'top' | 'front' | 'right'
 export type SketchPlane = StandardPlaneId | string
 export type SketchProfile = 'rectangle' | 'circle' | 'polygon'
-export type SketchTool = 'select' | 'line' | 'polyline' | 'rectangle' | 'circle' | 'arc' | 'trim' | 'offset' | 'dimension'
+export type SketchTool = 'select' | 'line' | 'polyline' | 'rectangle' | 'circle' | 'ellipse' | 'polygon' | 'slot' | 'arc' | 'trim' | 'offset' | 'dimension'
 
 export type ArbitraryPlane = {
   id: string
@@ -102,11 +102,12 @@ export type SketchConstraint = NonLinearConstraint
 
 export type SketchEntity = {
   id: string
-  type: 'line' | 'rectangle' | 'circle' | 'arc'
+  type: 'line' | 'rectangle' | 'circle' | 'ellipse' | 'polygon' | 'slot' | 'arc'
   points: [number, number][]
   closed: boolean
   isConstruction?: boolean
   radius?: number
+  sides?: number
 }
 
 export type SketchFeature = {

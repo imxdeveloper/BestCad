@@ -14,36 +14,46 @@ export function solveSketchConstraints(
 }
 
 export function offsetPolygon(points: [number, number][], distance: number): [number, number][] {
-  if (points.length < 3) return points
-  const n = points.length
-  const offsetPoints: [number, number][] = []
+  if (points.length < 3 || !Number.isFinite(distance)) return points.map((point) => [...point] as [number, number])
+  const area = points.reduce((sum, point, i) => {
+    const next = points[(i + 1) % points.length]
+    return sum + point[0] * next[1] - next[0] * point[1]
+  }, 0) / 2
+  const orientation = area >= 0 ? 1 : -1
+  const shiftedEdges = points.map((point, i) => {
+    const next = points[(i + 1) % points.length]
+    const dx = next[0] - point[0]
+    const dy = next[1] - point[1]
+    const length = Math.hypot(dx, dy)
+    if (length <= 1e-12) return null
+    // Positive distance moves outward, independent of polygon winding.
+    const nx = orientation * dy / length
+    const ny = -orientation * dx / length
+    return { point: [point[0] + nx * distance, point[1] + ny * distance] as [number, number], direction: [dx, dy] as [number, number] }
+  })
+  if (shiftedEdges.some((edge) => !edge)) return points.map((point) => [...point] as [number, number])
+  return points.map((_, i) => {
+    const previous = shiftedEdges[(i - 1 + points.length) % points.length]!
+    const current = shiftedEdges[i]!
+    const cross = previous.direction[0] * current.direction[1] - previous.direction[1] * current.direction[0]
+    if (Math.abs(cross) < 1e-10) return current.point
+    const dx = current.point[0] - previous.point[0]
+    const dy = current.point[1] - previous.point[1]
+    const t = (dx * current.direction[1] - dy * current.direction[0]) / cross
+    const intersection: [number, number] = [previous.point[0] + previous.direction[0] * t, previous.point[1] + previous.direction[1] * t]
+    // Bound extreme miters when a large offset approaches a sharp corner.
+    return Math.hypot(intersection[0] - points[i][0], intersection[1] - points[i][1]) <= Math.max(Math.abs(distance) * 20, 1000) ? intersection : current.point
+  })
+}
 
-  for (let i = 0; i < n; i++) {
-    const prev = points[(i - 1 + n) % n]
-    const curr = points[i]
-    const next = points[(i + 1) % n]
-
-    const d1x = curr[0] - prev[0]
-    const d1y = curr[1] - prev[1]
-    const len1 = Math.hypot(d1x, d1y) || 1
-    const n1x = -d1y / len1
-    const n1y = d1x / len1
-
-    const d2x = next[0] - curr[0]
-    const d2y = next[1] - curr[1]
-    const len2 = Math.hypot(d2x, d2y) || 1
-    const n2x = -d2y / len2
-    const n2y = d2x / len2
-
-    const avgNx = (n1x + n2x) / 2
-    const avgNy = (n1y + n2y) / 2
-    const avgLen = Math.hypot(avgNx, avgNy) || 1
-
-    offsetPoints.push([
-      curr[0] + (avgNx / avgLen) * distance,
-      curr[1] + (avgNy / avgLen) * distance,
-    ])
-  }
-
-  return offsetPoints
+export function offsetOpenPath(points: [number, number][], distance: number): [number, number][] {
+  if (points.length < 2 || !Number.isFinite(distance)) return points.map((point) => [...point] as [number, number])
+  return points.map((point, i) => {
+    const before = points[Math.max(0, i - 1)]
+    const after = points[Math.min(points.length - 1, i + 1)]
+    const dx = after[0] - before[0]
+    const dy = after[1] - before[1]
+    const length = Math.hypot(dx, dy) || 1
+    return [point[0] - dy / length * distance, point[1] + dx / length * distance]
+  })
 }
