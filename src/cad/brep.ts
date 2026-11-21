@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import type { ArbitraryPlane, BRepBody, BRepEdge, BRepFace, BRepLoop, BRepVertex, Part } from './types'
+import { getExtrusionOrigin } from './extrusion'
 
 /**
  * Builds an exact Boundary Representation (B-Rep) for a Box part.
@@ -248,7 +249,7 @@ export function buildExtrusionBRep(part: Part): BRepBody {
     throw new RangeError('An extrusion B-rep requires at least three finite profile points')
   }
   const depth = part.size[plane === 'top' ? 1 : plane === 'front' ? 2 : 0] || 4
-  const [cx, cy, cz] = part.position
+  const [cx, cy, cz] = getExtrusionOrigin(part)
 
   const normal: [number, number, number] = plane === 'top' ? [0, 1, 0] : plane === 'front' ? [0, 0, 1] : [1, 0, 0]
   const uAxis: [number, number, number] = plane === 'top' ? [1, 0, 0] : plane === 'front' ? [1, 0, 0] : [0, 0, 1]

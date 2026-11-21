@@ -84,6 +84,7 @@ import { getPartBRep, raycastPlanarFace } from './cad/brep'
 import { getSketchProjectionFrame, projectPartEdgeToSketch, syncProjectedSketches } from './cad/sketchProjection'
 import { solveCoupledConstraints } from './cad/constraintSolver'
 import { offsetOpenPath, offsetPolygon } from './cad/sketcher'
+import { getExtrusionOrigin } from './cad/extrusion'
 
 const SKETCH_PLANE_Y = 0.6
 
@@ -444,6 +445,7 @@ function createPartMesh(part: Part, selected: boolean, customGeo?: THREE.BufferG
   }
   if (part.kind === 'extrusion') {
     const plane = part.profilePlane ?? 'top'
+    mesh.position.set(...getExtrusionOrigin(part))
     if (part.arbitraryPlane) {
       // Geometry is already oriented in the arbitrary sketch frame.
     } else if (plane === 'top') mesh.rotation.x = -Math.PI / 2
@@ -586,6 +588,7 @@ function App() {
   const [sketchPlane, setSketchPlane] = useState<SketchPlane>('top')
   const [sketchStage, setSketchStage] = useState<SketchStage>('idle')
   const [extrudeDistance, setExtrudeDistance] = useState(4)
+  const [extrudeMode, setExtrudeMode] = useState<'new' | 'symmetric'>('new')
   const [showExtrudeDialog, setShowExtrudeDialog] = useState(false)
   const [solidCommand, setSolidCommand] = useState<SolidCommand | null>(null)
   const [operationValue, setOperationValue] = useState(1)
@@ -890,6 +893,7 @@ function App() {
         profileType,
         profilePlane: plane,
         arbitraryPlane: arbitraryPlane ?? undefined,
+        extrudeMode,
         sketchId: selectedSketchId ?? selectedSketch?.id,
         sketchEntityId: entity.id,
         size,
@@ -906,7 +910,7 @@ function App() {
     setSketchStage('idle')
     setShowExtrudeDialog(false)
     notify(`Created ${newParts.length} extruded ${newParts.length === 1 ? 'profile' : 'profiles'}`)
-  }, [activeArbitraryPlane, activeProfilePlane, commitParts, extrudeDistance, notify, parts, profileEntities, selectedSketch, selectedSketchId, setShowExtrudeDialog, sketchStage, sketchType])
+  }, [activeArbitraryPlane, activeProfilePlane, commitParts, extrudeDistance, extrudeMode, notify, parts, profileEntities, selectedSketch, selectedSketchId, setShowExtrudeDialog, sketchStage, sketchType])
 
   function deleteSelectedSketch(sketchId: string) {
     const dependentParts = parts.filter((part) => part.sketchId === sketchId)
@@ -3191,6 +3195,13 @@ function App() {
                     value={extrudeDistance}
                     onChange={(e) => setExtrudeDistance(Number(e.target.value))}
                   />
+                </label>
+                <label>
+                  Direction:
+                  <select aria-label="Extrusion direction" value={extrudeMode} onChange={(event) => setExtrudeMode(event.target.value as 'new' | 'symmetric')}>
+                    <option value="new">One sided</option>
+                    <option value="symmetric">Symmetric about sketch plane</option>
+                  </select>
                 </label>
                 <button className="primary-button" onClick={createExtrusion}>
                   Apply Extrusion

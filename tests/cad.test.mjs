@@ -11,6 +11,7 @@ import { generateEngineeringDrawingSVG } from '../src/cad/drawing.ts'
 import { executeCADScript, SCRIPT_TEMPLATES } from '../src/cad/automate.ts'
 import { buildBoxBRep, buildExtrusionBRep, getPartBRep } from '../src/cad/brep.ts'
 import { getSketchProjectionFrame, projectPartEdgeToSketch, syncProjectedSketches } from '../src/cad/sketchProjection.ts'
+import { getExtrusionOrigin } from '../src/cad/extrusion.ts'
 import { MATERIAL_PRESETS } from '../src/cad/materials.ts'
 
 function makePart(overrides = {}) {
@@ -277,4 +278,19 @@ test('extrusion B-rep includes vertices, edges, loops, and linked faces', () => 
 
 test('extrusion B-rep rejects profiles that cannot enclose a solid', () => {
   assert.throws(() => buildExtrusionBRep(makePart({ kind: 'extrusion', profile: [[0, 0], [1, 0]] })), /at least three/)
+})
+
+test('symmetric extrusion centers mesh and B-rep depth on the sketch plane', () => {
+  const part = makePart({
+    kind: 'extrusion', profile: [[0, 0], [4, 0], [4, 3], [0, 3]], profilePlane: 'front',
+    extrudeMode: 'symmetric', size: [4, 3, 8], position: [2, 5, 7],
+  })
+  const body = buildExtrusionBRep(part)
+  const bottom = body.vertices.filter((vertex) => vertex.id.includes('_bot_'))
+  const top = body.vertices.filter((vertex) => vertex.id.includes('_top_'))
+  assert.deepEqual(getExtrusionOrigin(part), [2, 5, 3])
+  assert.ok(bottom.every((vertex) => vertex.point[2] === 3))
+  assert.ok(top.every((vertex) => vertex.point[2] === 11))
+  const oneSided = buildExtrusionBRep({ ...part, extrudeMode: 'new' })
+  assert.ok(oneSided.vertices.filter((vertex) => vertex.id.includes('_bot_')).every((vertex) => vertex.point[2] === 7))
 })
