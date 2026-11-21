@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import * as THREE from 'three'
 import { solveCoupledConstraints } from '../src/cad/constraintSolver.ts'
-import { offsetPolygon } from '../src/cad/sketcher.ts'
+import { offsetOpenPath, offsetPolygon } from '../src/cad/sketcher.ts'
 import { solveAssemblyJoints, generateBOM } from '../src/cad/assembly.ts'
 import { generateCAMToolpaths } from '../src/cad/cam.ts'
 import { solveStaticStressFEA } from '../src/cad/simulation.ts'
@@ -75,6 +75,36 @@ test('polygon offset returns finite points and preserves vertex count', () => {
   const result = offsetPolygon([[0, 0], [10, 0], [10, 10], [0, 10]], 1)
   assert.equal(result.length, 4)
   assert.ok(result.flat().every(Number.isFinite))
+})
+
+test('polygon offset expands in the same direction for either winding', () => {
+  const counterClockwise = offsetPolygon([[0, 0], [10, 0], [10, 10], [0, 10]], 1)
+  const clockwise = offsetPolygon([[0, 0], [0, 10], [10, 10], [10, 0]], 1)
+  assert.deepEqual(counterClockwise, [[-1, -1], [11, -1], [11, 11], [-1, 11]])
+  assert.deepEqual(clockwise, [[-1, -1], [-1, 11], [11, 11], [11, -1]])
+})
+
+test('open path offset preserves direction and moves points by the requested normal distance', () => {
+  assert.deepEqual(offsetOpenPath([[0, 0], [10, 0]], 2), [[0, 2], [10, 2]])
+})
+
+test('constraint diagnostics use independent degrees of freedom and report redundant relations', () => {
+  const entities = [{ id: 'line', type: 'line', points: [[0, 0], [4, 3]], closed: false }]
+  const underDefined = solveCoupledConstraints(entities, [{ id: 'h', type: 'horizontal', entityIds: ['line'] }])
+  const fullyDefined = solveCoupledConstraints(entities, [
+    { id: 'h', type: 'horizontal', entityIds: ['line'] },
+    { id: 'd', type: 'distance', entityIds: ['line'], value: 4 },
+    { id: 'fixed', type: 'fixed', entityIds: ['line'], pointIndices: [0], value: 0 },
+  ])
+  const redundant = solveCoupledConstraints(entities, [
+    { id: 'h1', type: 'horizontal', entityIds: ['line'] },
+    { id: 'h2', type: 'horizontal', entityIds: ['line'] },
+  ])
+  assert.equal(underDefined.diagnostics.status, 'under_defined')
+  assert.equal(underDefined.diagnostics.dof, 3)
+  assert.equal(fullyDefined.diagnostics.status, 'fully_defined')
+  assert.equal(fullyDefined.diagnostics.dof, 0)
+  assert.equal(redundant.diagnostics.status, 'over_defined')
 })
 
 test('assembly slider clamps travel and leaves source positions intact', () => {
