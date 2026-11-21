@@ -571,6 +571,7 @@ function App() {
   const [sketchConstraints, setSketchConstraints] = useState<SketchConstraint[]>([])
   const [dimensionPointRefs, setDimensionPointRefs] = useState<{ entityId: string; pointIndex: number }[]>([])
   const [dimensionValue, setDimensionValue] = useState(0)
+  const [dimensionMode, setDimensionMode] = useState<'distance' | 'angle'>('distance')
   const [constraintMessage, setConstraintMessage] = useState('')
   const [pendingSketchPoints, setPendingSketchPoints] = useState<[number, number][]>([])
   const [sketchCursorPoint, setSketchCursorPoint] = useState<[number, number] | null>(null)
@@ -1123,6 +1124,26 @@ function App() {
       .map((entity) => ({ entity, distance: sketchEntityDistance(entity, point) }))
       .filter((item) => item.distance <= 0.28)
       .sort((a, b) => a.distance - b.distance)[0]
+    if (dimensionMode === 'angle') {
+      const line = nearestCurve?.entity
+      if (!line || line.type !== 'line' || line.points.length !== 2) { notify('Angle dimensions require selecting two straight lines'); return }
+      if (!dimensionPointRefs.length) {
+        setDimensionPointRefs([{ entityId: line.id, pointIndex: 0 }])
+        notify('Select the second line for the angle')
+        return
+      }
+      const firstRef = dimensionPointRefs[0]
+      if (firstRef.entityId === line.id) { notify('Choose a different second line'); return }
+      const firstLine = sketchEntities.find((entity) => entity.id === firstRef.entityId)
+      if (!firstLine || firstLine.type !== 'line' || firstLine.points.length !== 2) { setDimensionPointRefs([{ entityId: line.id, pointIndex: 0 }]); return }
+      const [a0, a1] = firstLine.points, [b0, b1] = line.points
+      const ax = a1[0] - a0[0], ay = a1[1] - a0[1], bx = b1[0] - b0[0], by = b1[1] - b0[1]
+      const angle = Math.atan2(ax * by - ay * bx, ax * bx + ay * by) * 180 / Math.PI
+      setDimensionPointRefs([firstRef, { entityId: line.id, pointIndex: 0 }])
+      setDimensionValue(Number(angle.toFixed(2)))
+      notify('Enter a target angle and apply the dimension')
+      return
+    }
     if (nearestCurve) {
       const { entity } = nearestCurve
       let firstIndex = 0, secondIndex = 1
@@ -1176,19 +1197,22 @@ function App() {
     setDimensionPointRefs([firstRef, ref])
     setDimensionValue(Number(Math.hypot(first[0] - nearest.coordinate[0], first[1] - nearest.coordinate[1]).toFixed(2)))
     notify('Enter a target length and apply the dimension')
-  }, [dimensionPointRefs, notify, sketchEntities])
+  }, [dimensionMode, dimensionPointRefs, notify, sketchEntities])
 
   function applySketchDimension() {
-    if (dimensionPointRefs.length !== 2 || !Number.isFinite(dimensionValue) || dimensionValue <= 0) {
-      notify('Choose two sketch points and enter a positive dimension')
+    const validValue = dimensionMode === 'angle'
+      ? Number.isFinite(dimensionValue) && Math.abs(dimensionValue) <= 180
+      : Number.isFinite(dimensionValue) && dimensionValue > 0
+    if (dimensionPointRefs.length !== 2 || !validValue) {
+      notify(dimensionMode === 'angle' ? 'Choose two lines and enter an angle from -180° to 180°' : 'Choose two sketch points and enter a positive dimension')
       return
     }
     const constraint: SketchConstraint = {
       id: createFeatureId('constraint'),
-      type: 'distance',
+      type: dimensionMode,
       entityIds: dimensionPointRefs.map((ref) => ref.entityId),
-      pointIndices: dimensionPointRefs.map((ref) => ref.pointIndex) as [number, number],
       value: dimensionValue,
+      ...(dimensionMode === 'distance' ? { pointIndices: dimensionPointRefs.map((ref) => ref.pointIndex) as [number, number] } : {}),
     }
     const nextConstraints = [...sketchConstraints, constraint]
     const result = solveCoupledConstraints(sketchEntities, nextConstraints)
@@ -1200,7 +1224,7 @@ function App() {
     setSketchConstraints(nextConstraints)
     setConstraintMessage(`${result.diagnostics.status.replace('_', ' ')} · ${result.diagnostics.dof} DOF`)
     setDimensionPointRefs([])
-    notify(`Dimension set to ${dimensionValue.toFixed(2)} mm`)
+    notify(`Dimension set to ${dimensionValue.toFixed(2)} ${dimensionMode === 'angle' ? '°' : 'mm'}`)
   }
 
   function deleteSelectedSketchEntity() {
@@ -2182,10 +2206,27 @@ function App() {
     })
     if (sketchStage === 'drawing' && sketchConstraints.length) {
       const frame = sketchPlaneFrame(sketchPlane, activeArbitraryPlane ?? undefined)
-      for (const constraint of sketchConstraints.filter((item) => item.type === 'distance' && item.entityIds.length)) {
+      for (const constraint of sketchConstraints.filter((item) => (item.type === 'distance' || item.type === 'angle') && item.entityIds.length)) {
         const entityA = sketchEntities.find((entity) => entity.id === constraint.entityIds[0])
         const entityB = sketchEntities.find((entity) => entity.id === (constraint.entityIds[1] ?? constraint.entityIds[0]))
         if (!entityA || !entityB) continue
+        if (constraint.type === 'angle') {
+          if (entityA.type !== 'line' || entityB.type !== 'line' || entityA.points.length !== 2 || entityB.points.length !== 2) continue
+          const centerA: [number, number] = [(entityA.points[0][0] + entityA.points[1][0]) / 2, (entityA.points[0][1] + entityA.points[1][1]) / 2]
+          const centerB: [number, number] = [(entityB.points[0][0] + entityB.points[1][0]) / 2, (entityB.points[0][1] + entityB.points[1][1]) / 2]
+          const canvas = document.createElement('canvas')
+          canvas.width = 256; canvas.height = 64
+          const context = canvas.getContext('2d')
+          if (context) {
+            context.fillStyle = 'rgba(14, 26, 36, 0.92)'; context.beginPath(); context.roundRect(4, 4, 248, 56, 12); context.fill()
+            context.fillStyle = '#a9eaff'; context.font = 'bold 30px Segoe UI, sans-serif'; context.textAlign = 'center'; context.textBaseline = 'middle'
+            context.fillText(`${(constraint.value ?? 0).toFixed(2)}°`, 128, 32)
+            const label = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(canvas), transparent: true, depthTest: false }))
+            label.position.copy(frame.origin).addScaledVector(frame.uAxis, (centerA[0] + centerB[0]) / 2).addScaledVector(frame.vAxis, (centerA[1] + centerB[1]) / 2).addScaledVector(frame.normal, 0.055)
+            label.scale.set(1.1, 0.25, 1); label.renderOrder = 15; viewer.sketch.add(label)
+          }
+          continue
+        }
         const first = entityA.points[constraint.pointIndices?.[0] ?? 0]
         const second = entityB.points[constraint.pointIndices?.[1] ?? 1]
         if (!first || !second) continue
@@ -2777,12 +2818,16 @@ function App() {
             </button>
             <span style={{ fontSize: 10, color: '#8b9b8b', padding: '0 6px' }}>{sketchType === 'select' ? 'Click to select/drag · Shift-click a second line for relations' : sketchType === 'line' ? 'Click two endpoints' : sketchType === 'polyline' ? 'Click points · click start to close · Enter to finish' : sketchType === 'spline' ? 'Click control points · Enter to finish (3+ points)' : sketchType === 'arc' ? 'Click center, start, end' : sketchType === 'circle' ? 'Click center, then radius' : sketchType === 'ellipse' ? 'Click center, major axis, minor axis' : sketchType === 'polygon' ? 'Click center, then radius' : sketchType === 'slot' ? 'Click end centers, then slot radius' : sketchType === 'trim' ? 'Click an open line segment to trim at intersection' : sketchType === 'offset' ? 'Select a curve, set distance, apply' : sketchType === 'dimension' ? 'Click a line/circle/arc for length or radius, or choose two points' : 'Click two corners'}{!['select', 'dimension', 'trim', 'offset'].includes(sketchType) ? ' · Shift bypasses snap' : ''}</span>
             {sketchType === 'select' && selectedSketchEntityId && <button className="subtle-button" onClick={deleteSelectedSketchEntity}><Trash2 size={13} /> Delete entity</button>}
-            {sketchType === 'dimension' && dimensionPointRefs.length === 2 && (
-              <>
-                <input aria-label="Dimension length in millimeters" type="number" min="0.01" step="0.1" value={dimensionValue} onChange={(event) => setDimensionValue(Number(event.target.value))} style={{ width: 76 }} />
-                <button className="subtle-button" onClick={applySketchDimension}>Apply mm</button>
-              </>
-            )}
+            {sketchType === 'dimension' && <>
+                <select aria-label="Sketch dimension type" value={dimensionMode} onChange={(event) => { setDimensionMode(event.target.value as 'distance' | 'angle'); setDimensionPointRefs([]) }}>
+                  <option value="distance">Length / radius</option>
+                  <option value="angle">Angle</option>
+                </select>
+                {dimensionPointRefs.length === 2 && <>
+                  <input aria-label={dimensionMode === 'angle' ? 'Angle dimension in degrees' : 'Dimension length in millimeters'} type="number" min={dimensionMode === 'angle' ? -180 : 0.01} max={dimensionMode === 'angle' ? 180 : undefined} step="0.1" value={dimensionValue} onChange={(event) => setDimensionValue(Number(event.target.value))} style={{ width: 76 }} />
+                  <button className="subtle-button" onClick={applySketchDimension}>{dimensionMode === 'angle' ? 'Apply °' : 'Apply mm'}</button>
+                </>}
+            </>}
             {sketchDiagnostics && <span title="Estimated sketch constraint status" style={{ fontSize: 10, color: sketchDiagnostics.status === 'fully_defined' ? '#83e0a2' : sketchDiagnostics.status === 'over_defined' || sketchDiagnostics.status === 'inconsistent' ? '#ff9b86' : '#9ab99a' }}>{sketchDiagnostics.status.replace('_', ' ')} · {sketchDiagnostics.dof} DOF</span>}
             {constraintMessage && <span style={{ fontSize: 10, color: '#9ab99a' }}>{constraintMessage}</span>}
             <button className="subtle-button" onClick={cancelSketch}><X size={13} /> Cancel</button>
