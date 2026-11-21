@@ -45,7 +45,6 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js'
 import { OBJExporter } from 'three/examples/jsm/exporters/OBJExporter.js'
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js'
-import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js'
 import './App.css'
 
 import type {
@@ -84,9 +83,9 @@ import { buildMeshBRep, getPartBRep, raycastPlanarFace } from './cad/brep'
 import { getSketchProjectionFrame, projectPartEdgeToSketch, syncProjectedSketches } from './cad/sketchProjection'
 import { solveCoupledConstraints } from './cad/constraintSolver'
 import { offsetOpenPath, offsetPolygon } from './cad/sketcher'
-import { getExtrusionOrigin } from './cad/extrusion'
 import { createLoftMesh } from './cad/loft'
 import { createSweepMesh } from './cad/sweep'
+import { applyPartTransform, createPartGeometry } from './cad/partGeometry'
 
 const SKETCH_PLANE_Y = 0.6
 
@@ -106,10 +105,6 @@ function sketchPlaneFrame(plane: SketchPlane, arbitraryPlane?: ArbitraryPlane) {
   if (plane === 'top') return { origin: new THREE.Vector3(0, SKETCH_PLANE_Y, 0), uAxis: new THREE.Vector3(1, 0, 0), vAxis: new THREE.Vector3(0, 0, -1), normal: new THREE.Vector3(0, 1, 0) }
   if (plane === 'front') return { origin: new THREE.Vector3(0, 0, 0), uAxis: new THREE.Vector3(1, 0, 0), vAxis: new THREE.Vector3(0, 1, 0), normal: new THREE.Vector3(0, 0, 1) }
   return { origin: new THREE.Vector3(0, 0, 0), uAxis: new THREE.Vector3(0, 0, 1), vAxis: new THREE.Vector3(0, 1, 0), normal: new THREE.Vector3(-1, 0, 0) }
-}
-
-function planeLocalExtrusionProfile(points: [number, number][]): [number, number][] {
-  return points.map(([u, v]): [number, number] => [u, v])
 }
 
 function arcPoints(center: [number, number], start: [number, number], end: [number, number]): [number, number][] {
@@ -377,112 +372,8 @@ const workspaceCatalog = [
   { id: 'automate', label: 'Automate', icon: Code2, description: 'Script templates and parametric generators', categories: ['Script Editor', 'Templates', 'Run'], status: 'Prototype' },
 ] as const
 
-function createChamferedBoxGeometry(size: Part['size'], chamfer: number): THREE.BufferGeometry {
-  const [width, height, depth] = size
-  const shape = new THREE.Shape()
-  shape.moveTo(-width / 2, -depth / 2)
-  shape.lineTo(width / 2, -depth / 2)
-  shape.lineTo(width / 2, depth / 2)
-  shape.lineTo(-width / 2, depth / 2)
-  shape.closePath()
-  const geometry = new THREE.ExtrudeGeometry(shape, {
-    depth: height,
-    bevelEnabled: true,
-    bevelSegments: 1,
-    bevelSize: chamfer,
-    bevelThickness: chamfer,
-  })
-  geometry.translate(0, 0, -height / 2)
-  geometry.rotateX(-Math.PI / 2)
-  return geometry
-}
-
-function createTreatedCylinderGeometry(part: Part, treatment: EdgeTreatment): THREE.BufferGeometry {
-  const radius = Math.min(part.size[0], part.size[2]) / 2
-  const height = part.size[1]
-  const edgeSize = Math.min(treatment.size, radius * 0.45, height * 0.45)
-  const points: THREE.Vector2[] = [new THREE.Vector2(0, -height / 2)]
-  if (treatment.type === 'fillet') {
-    points.push(new THREE.Vector2(radius - edgeSize, -height / 2))
-    for (let index = 0; index <= 6; index += 1) {
-      const angle = -Math.PI / 2 + (Math.PI / 2 * index) / 6
-      points.push(new THREE.Vector2(radius - edgeSize + Math.cos(angle) * edgeSize, -height / 2 + edgeSize + Math.sin(angle) * edgeSize))
-    }
-    points.push(new THREE.Vector2(radius, height / 2 - edgeSize))
-    for (let index = 0; index <= 6; index += 1) {
-      const angle = (Math.PI / 2 * index) / 6
-      points.push(new THREE.Vector2(radius - edgeSize + Math.cos(angle) * edgeSize, height / 2 - edgeSize + Math.sin(angle) * edgeSize))
-    }
-  } else {
-    points.push(
-      new THREE.Vector2(radius - edgeSize, -height / 2),
-      new THREE.Vector2(radius, -height / 2 + edgeSize),
-      new THREE.Vector2(radius, height / 2 - edgeSize),
-      new THREE.Vector2(radius - edgeSize, height / 2),
-    )
-  }
-  points.push(new THREE.Vector2(0, height / 2))
-  return new THREE.LatheGeometry(points, 48)
-}
-
 function createPartMesh(part: Part, selected: boolean, customGeo?: THREE.BufferGeometry) {
-  let geometry: THREE.BufferGeometry = customGeo ?? new THREE.BufferGeometry()
-  if (!customGeo) {
-    if (part.meshData) {
-      geometry.setAttribute('position', new THREE.Float32BufferAttribute(part.meshData.positions, 3))
-      geometry.setIndex(part.meshData.indices)
-      geometry.computeVertexNormals()
-    } else if (part.kind === 'revolution' && part.profile) {
-      const axis = part.revolveAxis ?? 'vertical'
-      const points = part.profile.map(([u, v]) => new THREE.Vector2(Math.abs(axis === 'vertical' ? u : v), axis === 'vertical' ? v : u))
-      const angleRad = THREE.MathUtils.degToRad(part.revolveAngle ?? 360)
-      geometry = new THREE.LatheGeometry(points, 64, 0, angleRad)
-      if (axis === 'vertical') {
-        if (part.profilePlane === 'right') geometry.rotateY(Math.PI / 2)
-        else if (part.profilePlane === 'top') geometry.rotateX(Math.PI / 2)
-      } else {
-        const horizontalAxis = part.profilePlane === 'right' ? new THREE.Vector3(0, 0, -1) : new THREE.Vector3(1, 0, 0)
-        geometry.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), horizontalAxis))
-      }
-    } else if (part.kind === 'extrusion' && part.profile) {
-      const shape = new THREE.Shape()
-      const plane = part.profilePlane ?? 'top'
-      const profile = planeLocalExtrusionProfile(part.profile)
-      profile.forEach(([x, y], index) => {
-        if (index === 0) shape.moveTo(x, y)
-        else shape.lineTo(x, y)
-      })
-      shape.closePath()
-      const treatment = part.edgeTreatment
-      geometry = new THREE.ExtrudeGeometry(shape, {
-        depth: part.arbitraryPlane ? part.size[2] : part.size[sketchPlaneAxes(plane).normalAxis],
-        bevelEnabled: Boolean(treatment),
-        bevelSegments: treatment?.type === 'fillet' ? 4 : 1,
-        bevelSize: treatment?.size ?? 0,
-        bevelThickness: treatment?.size ?? 0,
-      })
-      if (part.arbitraryPlane) {
-        const { uAxis, vAxis, normal } = part.arbitraryPlane
-        const basis = new THREE.Matrix4().makeBasis(new THREE.Vector3(...uAxis), new THREE.Vector3(...vAxis), new THREE.Vector3(...normal))
-        geometry.applyMatrix4(basis)
-      }
-    } else if (part.kind === 'box' && part.edgeTreatment?.type === 'fillet') {
-      const radius = Math.min(part.edgeTreatment.size, Math.min(...part.size) * 0.45)
-      geometry = new RoundedBoxGeometry(...part.size, 4, radius)
-    } else if (part.kind === 'box' && part.edgeTreatment?.type === 'chamfer') {
-      const chamfer = Math.min(part.edgeTreatment.size, Math.min(...part.size) * 0.45)
-      geometry = createChamferedBoxGeometry(part.size, chamfer)
-    } else if (part.kind === 'cylinder' && part.edgeTreatment) {
-      geometry = createTreatedCylinderGeometry(part, part.edgeTreatment)
-    } else if (part.kind === 'cylinder') {
-      geometry = new THREE.CylinderGeometry(part.size[0] / 2, part.size[2] / 2, part.size[1], 48)
-    } else if (part.kind === 'sphere') {
-      geometry = new THREE.SphereGeometry(0.5, 40, 28)
-      geometry.scale(...part.size)
-    } else {
-      geometry = new THREE.BoxGeometry(...part.size)
-    }
-  }
+  const geometry = customGeo ?? createPartGeometry(part)
 
   const matData = getMaterial(part.materialId)
   const hasVertexColors = Boolean(geometry.getAttribute('color'))
@@ -497,18 +388,7 @@ function createPartMesh(part: Part, selected: boolean, customGeo?: THREE.BufferG
   })
 
   const mesh = new THREE.Mesh(geometry, material)
-  mesh.position.set(...part.position)
-  if (part.rotation) {
-    mesh.rotation.set(...part.rotation)
-  }
-  if (part.kind === 'extrusion') {
-    const plane = part.profilePlane ?? 'top'
-    mesh.position.set(...getExtrusionOrigin(part))
-    if (part.arbitraryPlane) {
-      // Geometry is already oriented in the arbitrary sketch frame.
-    } else if (plane === 'top') mesh.rotation.x = -Math.PI / 2
-    else if (plane === 'right') mesh.rotation.y = -Math.PI / 2
-  }
+  applyPartTransform(mesh, part)
   mesh.visible = part.visible
   mesh.castShadow = true
   mesh.receiveShadow = true

@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import type { ArbitraryPlane, BRepBody, BRepEdge, BRepFace, BRepLoop, BRepVertex, Part } from './types'
 import { getExtrusionOrigin } from './extrusion'
+import { applyPartTransform, createPartGeometry } from './partGeometry'
 
 /**
  * Builds an exact Boundary Representation (B-Rep) for a Box part.
@@ -395,7 +396,7 @@ export function buildMeshBRep(part: Part): BRepBody {
       part.meshData!.positions[offset + 2] + part.position[2],
     ]
     if (!point.every(Number.isFinite)) throw new RangeError('Mesh contains a non-finite vertex')
-    const key = point.map((value) => value.toFixed(6)).join(',')
+    const key = point.map((value) => (Object.is(Number(value.toFixed(6)), -0) ? 0 : Number(value.toFixed(6))).toFixed(6)).join(',')
     if (!vertexIds.has(key)) {
       const id = `v_${part.id}_${vertices.length}`
       vertexIds.set(key, id)
@@ -446,12 +447,33 @@ export function buildMeshBRep(part: Part): BRepBody {
   return { id: `brep_${part.id}`, partId: part.id, vertices, edges, loops, faces }
 }
 
+function buildPartMeshBRep(part: Part): BRepBody {
+  const geometry = createPartGeometry(part)
+  try {
+    const attribute = geometry.getAttribute('position')
+    if (!attribute) throw new RangeError(`${part.name} has no mesh positions`)
+    const transform = new THREE.Object3D()
+    applyPartTransform(transform, part)
+    transform.updateMatrix()
+    const positions: number[] = []
+    for (let index = 0; index < attribute.count; index += 1) {
+      positions.push(...new THREE.Vector3().fromBufferAttribute(attribute, index).applyMatrix4(transform.matrix).toArray())
+    }
+    const index = geometry.getIndex()
+    const indices = index ? Array.from(index.array) : Array.from({ length: attribute.count }, (_, item) => item)
+    return buildMeshBRep({ ...part, position: [0, 0, 0], meshData: { positions, indices } })
+  } finally {
+    geometry.dispose()
+  }
+}
+
 /**
  * Computes or retrieves the B-Rep body for any Part
  */
 export function getPartBRep(part: Part): BRepBody {
   if (part.brep) return part.brep
-  if (part.meshData) return buildMeshBRep(part)
+  if (part.meshData && !part.rotation) return buildMeshBRep(part)
+  if (part.meshData || part.kind === 'sphere' || part.edgeTreatment || part.rotation || part.arbitraryPlane || (part.kind === 'revolution' && (part.revolveAngle ?? 360) >= 359.999)) return buildPartMeshBRep(part)
   if (part.kind === 'cylinder') return buildCylinderBRep(part)
   if (part.kind === 'extrusion') return buildExtrusionBRep(part)
   return buildBoxBRep(part)

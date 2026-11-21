@@ -10,6 +10,7 @@ import { computeGeometryMetrics, calculateDistance } from '../src/cad/inspection
 import { generateEngineeringDrawingSVG } from '../src/cad/drawing.ts'
 import { executeCADScript, SCRIPT_TEMPLATES } from '../src/cad/automate.ts'
 import { buildBoxBRep, buildExtrusionBRep, buildMeshBRep, getPartBRep } from '../src/cad/brep.ts'
+import { applyPartTransform, createPartGeometry } from '../src/cad/partGeometry.ts'
 import { getSketchProjectionFrame, projectPartEdgeToSketch, syncProjectedSketches } from '../src/cad/sketchProjection.ts'
 import { getExtrusionOrigin } from '../src/cad/extrusion.ts'
 import { createLoftMesh } from '../src/cad/loft.ts'
@@ -377,4 +378,35 @@ test('STEP faceted export accepts primitive, extrusion, loft, and sweep geometry
     makePart({ id: 'sweep', kind: 'custom', ...sweep }),
   ])
   assert.equal([...step.matchAll(/= FACETED_BREP\(/g)].length, 10)
+})
+
+test('treated and transformed part B-reps follow the rendered part geometry', () => {
+  for (const part of [
+    makePart({ edgeTreatment: { type: 'fillet', size: 0.5 } }),
+    makePart({ id: 'chamfer', edgeTreatment: { type: 'chamfer', size: 0.5 } }),
+    makePart({ id: 'sphere', kind: 'sphere', size: [4, 4, 4] }),
+    makePart({ id: 'rotated', rotation: [0, Math.PI / 2, 0] }),
+  ]) {
+    const body = getPartBRep(part)
+    const geometry = createPartGeometry(part)
+    const transform = new THREE.Object3D()
+    applyPartTransform(transform, part)
+    transform.updateMatrixWorld(true)
+    geometry.applyMatrix4(transform.matrixWorld)
+    geometry.computeBoundingBox()
+    const localBounds = geometry.boundingBox
+    const actualSize = localBounds.getSize(new THREE.Vector3())
+    geometry.dispose()
+    assert.ok(body.faces.length > 6, part.id)
+    assert.ok(body.vertices.length >= 8, part.id)
+    const xs = body.vertices.map((vertex) => vertex.point[0])
+    assert.ok(Math.abs(Math.max(...xs) - Math.min(...xs) - actualSize.x) < 1e-4, part.id)
+    const ys = body.vertices.map((vertex) => vertex.point[1])
+    const zs = body.vertices.map((vertex) => vertex.point[2])
+    assert.ok(Math.abs(Math.max(...ys) - Math.min(...ys) - actualSize.y) < 1e-4, part.id)
+    assert.ok(Math.abs(Math.max(...zs) - Math.min(...zs) - actualSize.z) < 1e-4, part.id)
+    const edgeUse = new Map()
+    for (const loop of body.loops) for (const edgeId of loop.edgeIds) edgeUse.set(edgeId, (edgeUse.get(edgeId) ?? 0) + 1)
+    assert.ok([...edgeUse.values()].every((count) => count === 2), `${part.id} B-rep is closed`)
+  }
 })
