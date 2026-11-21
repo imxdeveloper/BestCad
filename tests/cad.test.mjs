@@ -125,6 +125,24 @@ test('radius and diameter dimensions drive circle geometry', () => {
   assert.ok(Math.abs(Math.hypot(diameterEdge[0] - diameterCenter[0], diameterEdge[1] - diameterCenter[1]) - 6) < 1e-3)
 })
 
+test('horizontal and vertical point dimensions drive orthographic spacing', () => {
+  const entities = [
+    { id: 'a', type: 'line', points: [[0, 0], [2, 1]], closed: false },
+    { id: 'b', type: 'line', points: [[8, 9], [9, 10]], closed: false },
+  ]
+  const horizontal = solveCoupledConstraints(entities, [{ id: 'x', type: 'horizontal_distance', entityIds: ['a', 'b'], pointIndices: [0, 0], value: 12 }])
+  const [horizontalStart] = horizontal.solvedEntities[0].points
+  const [horizontalEnd] = horizontal.solvedEntities[1].points
+  assert.ok(horizontal.diagnostics.converged)
+  assert.ok(Math.abs(Math.abs(horizontalEnd[0] - horizontalStart[0]) - 12) < 1e-3)
+
+  const vertical = solveCoupledConstraints(entities, [{ id: 'y', type: 'vertical_distance', entityIds: ['a', 'b'], pointIndices: [1, 0], value: 14 }])
+  const horizontalLineEnd = vertical.solvedEntities[0].points[1]
+  const verticalLineStart = vertical.solvedEntities[1].points[0]
+  assert.ok(vertical.diagnostics.converged)
+  assert.ok(Math.abs(Math.abs(verticalLineStart[1] - horizontalLineEnd[1]) - 14) < 1e-3)
+})
+
 test('polygon offset returns finite points and preserves vertex count', () => {
   const result = offsetPolygon([[0, 0], [10, 0], [10, 10], [0, 10]], 1)
   assert.equal(result.length, 4)

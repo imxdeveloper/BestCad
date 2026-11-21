@@ -514,7 +514,7 @@ function App() {
   const [sketchConstraints, setSketchConstraints] = useState<SketchConstraint[]>([])
   const [dimensionPointRefs, setDimensionPointRefs] = useState<{ entityId: string; pointIndex: number }[]>([])
   const [dimensionValue, setDimensionValue] = useState(0)
-  const [dimensionMode, setDimensionMode] = useState<'distance' | 'angle' | 'width' | 'height' | 'radius' | 'diameter'>('distance')
+  const [dimensionMode, setDimensionMode] = useState<'distance' | 'horizontal_distance' | 'vertical_distance' | 'angle' | 'width' | 'height' | 'radius' | 'diameter'>('distance')
   const [constraintMessage, setConstraintMessage] = useState('')
   const [pendingSketchPoints, setPendingSketchPoints] = useState<[number, number][]>([])
   const [sketchCursorPoint, setSketchCursorPoint] = useState<[number, number] | null>(null)
@@ -1141,6 +1141,35 @@ function App() {
       notify(`Enter a target ${dimensionMode} and apply`)
       return
     }
+    if (['distance', 'horizontal_distance', 'vertical_distance'].includes(dimensionMode)) {
+      let nearestPoint: { entityId: string; pointIndex: number; distance: number; coordinate: [number, number] } | null = null
+      for (const entity of sketchEntities.filter((item) => !item.isProjected)) {
+        for (let pointIndex = 0; pointIndex < entity.points.length; pointIndex += 1) {
+          const coordinate = entity.points[pointIndex]
+          const distance = Math.hypot(coordinate[0] - point[0], coordinate[1] - point[1])
+          if (!nearestPoint || distance < nearestPoint.distance) nearestPoint = { entityId: entity.id, pointIndex, distance, coordinate }
+        }
+      }
+      if (nearestPoint && nearestPoint.distance <= 0.22) {
+        const ref = { entityId: nearestPoint.entityId, pointIndex: nearestPoint.pointIndex }
+        if (!dimensionPointRefs.length) {
+          setDimensionPointRefs([ref])
+          notify('Choose the second sketch point')
+          return
+        }
+        const firstRef = dimensionPointRefs[0]
+        if (firstRef.entityId === ref.entityId && firstRef.pointIndex === ref.pointIndex) { notify('Choose a different sketch point'); return }
+        const firstPoint = sketchEntities.find((entity) => entity.id === firstRef.entityId)?.points[firstRef.pointIndex]
+        if (!firstPoint) { setDimensionPointRefs([ref]); return }
+        const deltaX = nearestPoint.coordinate[0] - firstPoint[0]
+        const deltaY = nearestPoint.coordinate[1] - firstPoint[1]
+        const value = dimensionMode === 'horizontal_distance' ? Math.abs(deltaX) : dimensionMode === 'vertical_distance' ? Math.abs(deltaY) : Math.hypot(deltaX, deltaY)
+        setDimensionPointRefs([firstRef, ref])
+        setDimensionValue(Number(value.toFixed(2)))
+        notify(`Enter a target ${dimensionMode.replace('_', ' ')} and apply`)
+        return
+      }
+    }
     if (nearestCurve) {
       const { entity } = nearestCurve
       let firstIndex = 0, secondIndex = 1
@@ -1214,7 +1243,7 @@ function App() {
       type: dimensionMode,
       entityIds,
       value: dimensionValue,
-      ...(dimensionMode === 'distance' ? { pointIndices: dimensionPointRefs.map((ref) => ref.pointIndex) as [number, number] } : {}),
+      ...(['distance', 'horizontal_distance', 'vertical_distance'].includes(dimensionMode) ? { pointIndices: dimensionPointRefs.map((ref) => ref.pointIndex) as [number, number] } : {}),
     }
     const nextConstraints = [...sketchConstraints, constraint]
     const result = solveCoupledConstraints(sketchEntities, nextConstraints)
@@ -2274,7 +2303,7 @@ function App() {
     })
     if (sketchStage === 'drawing' && sketchConstraints.length) {
       const frame = sketchPlaneFrame(sketchPlane, activeArbitraryPlane ?? undefined)
-      for (const constraint of sketchConstraints.filter((item) => (item.type === 'distance' || item.type === 'angle' || item.type === 'width' || item.type === 'height' || item.type === 'radius' || item.type === 'diameter') && item.entityIds.length)) {
+      for (const constraint of sketchConstraints.filter((item) => (item.type === 'distance' || item.type === 'horizontal_distance' || item.type === 'vertical_distance' || item.type === 'angle' || item.type === 'width' || item.type === 'height' || item.type === 'radius' || item.type === 'diameter') && item.entityIds.length)) {
         const entityA = sketchEntities.find((entity) => entity.id === constraint.entityIds[0])
         const entityB = sketchEntities.find((entity) => entity.id === (constraint.entityIds[1] ?? constraint.entityIds[0]))
         if (!entityA || !entityB) continue
@@ -2303,11 +2332,13 @@ function App() {
           else second = [cornerA[0], cornerB[1]]
         }
         if (!first || !second) continue
+        if (constraint.type === 'horizontal_distance') second = [second[0], first[1]]
+        if (constraint.type === 'vertical_distance') second = [first[0], second[1]]
         const dx = second[0] - first[0], dy = second[1] - first[1]
         const length = Math.hypot(dx, dy)
         if (length < 1e-6) continue
-        const nx = constraint.type === 'width' ? 0 : constraint.type === 'height' ? -0.28 : -dy / length * 0.28
-        const ny = constraint.type === 'width' ? -0.28 : constraint.type === 'height' ? 0 : dx / length * 0.28
+        const nx = constraint.type === 'width' || constraint.type === 'horizontal_distance' ? 0 : constraint.type === 'height' || constraint.type === 'vertical_distance' ? -0.28 : -dy / length * 0.28
+        const ny = constraint.type === 'width' || constraint.type === 'horizontal_distance' ? -0.28 : constraint.type === 'height' || constraint.type === 'vertical_distance' ? 0 : dx / length * 0.28
         const a = [first[0] + nx, first[1] + ny] as [number, number]
         const b = [second[0] + nx, second[1] + ny] as [number, number]
         const lineGeometry = new THREE.BufferGeometry()
@@ -2908,6 +2939,8 @@ function App() {
             {sketchType === 'dimension' && <>
                 <select aria-label="Sketch dimension type" value={dimensionMode} onChange={(event) => { setDimensionMode(event.target.value as typeof dimensionMode); setDimensionPointRefs([]) }}>
                   <option value="distance">Length / radius</option>
+                  <option value="horizontal_distance">Horizontal distance</option>
+                  <option value="vertical_distance">Vertical distance</option>
                   <option value="radius">Circle / arc radius</option>
                   <option value="diameter">Circle diameter</option>
                   <option value="angle">Angle</option>

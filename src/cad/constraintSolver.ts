@@ -109,6 +109,13 @@ export function solveCoupledConstraints(
         const pB = readPt(entB, idxB)
         const currentDist = Math.hypot(pA[0] - pB[0], pA[1] - pB[1])
         residuals.push(currentDist - targetDist)
+      } else if (c.type === 'horizontal_distance' || c.type === 'vertical_distance') {
+        const idxA = c.pointIndices?.[0] ?? 0
+        const idxB = c.pointIndices?.[1] ?? 0
+        const pA = readPt(c.entityIds[0], idxA)
+        const pB = readPt(c.entityIds[1], idxB)
+        const delta = Math.abs(c.type === 'horizontal_distance' ? pB[0] - pA[0] : pB[1] - pA[1])
+        residuals.push(delta - (c.value ?? 10))
       } else if (c.type === 'radius' || c.type === 'diameter') {
         const center = readPt(c.entityIds[0], 0)
         const rim = readPt(c.entityIds[0], 1)

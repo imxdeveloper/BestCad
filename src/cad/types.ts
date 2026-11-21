@@ -70,6 +70,8 @@ export type CoupledConstraintType =
   | 'horizontal'
   | 'vertical'
   | 'distance'
+  | 'horizontal_distance'
+  | 'vertical_distance'
   | 'radius'
   | 'diameter'
   | 'width'
