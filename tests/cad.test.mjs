@@ -13,6 +13,7 @@ import { buildBoxBRep, buildExtrusionBRep, buildMeshBRep, getPartBRep } from '..
 import { getSketchProjectionFrame, projectPartEdgeToSketch, syncProjectedSketches } from '../src/cad/sketchProjection.ts'
 import { getExtrusionOrigin } from '../src/cad/extrusion.ts'
 import { createLoftMesh } from '../src/cad/loft.ts'
+import { createSweepMesh } from '../src/cad/sweep.ts'
 import { MATERIAL_PRESETS } from '../src/cad/materials.ts'
 
 function makePart(overrides = {}) {
@@ -316,4 +317,22 @@ test('loft creates a closed faceted B-rep between unequal parallel profiles', ()
     [vector(0, 0, 0), vector(2, 0, 0), vector(2, 2, 0), vector(0, 2, 0)],
     [vector(0, 0, 0), vector(2, 0, 0), vector(2, 2, 0), vector(0, 2, 0)],
   ), /separate parallel planes/)
+})
+
+test('sweep follows a 3D path with a closed faceted B-rep', () => {
+  const vector = (x, y, z) => new THREE.Vector3(x, y, z)
+  const sweep = createSweepMesh(
+    [vector(-1, -1, 0), vector(1, -1, 0), vector(1, 1, 0), vector(-1, 1, 0)],
+    [vector(0, 0, 0), vector(0, 0, 3), vector(2, 0, 5)],
+  )
+  assert.ok(sweep.size[0] >= 3 && sweep.size[1] >= 2 && sweep.size[2] >= 5)
+  assert.ok(sweep.size.every(Number.isFinite))
+  const brep = buildMeshBRep(makePart({ kind: 'custom', ...sweep }))
+  const edgeUse = new Map()
+  for (const loop of brep.loops) for (const edgeId of loop.edgeIds) edgeUse.set(edgeId, (edgeUse.get(edgeId) ?? 0) + 1)
+  assert.ok([...edgeUse.values()].every((count) => count === 2))
+  assert.throws(() => createSweepMesh(
+    [vector(-1, -1, 0), vector(1, -1, 0), vector(1, 1, 0), vector(-1, 1, 0)],
+    [vector(0, 0, 0), vector(0, 1, 1), vector(0, 1, 2)],
+  ), /normal to the profile/)
 })

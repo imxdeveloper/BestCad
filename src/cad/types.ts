@@ -197,6 +197,8 @@ export type Part = {
   sketchEntityId?: string
   loftSketchIds?: [string, string]
   loftSketchEntityIds?: [string, string]
+  sweepSketchIds?: [string, string]
+  sweepSketchEntityIds?: [string, string]
   edgeTreatment?: EdgeTreatment
   meshData?: MeshData
   brep?: BRepBody

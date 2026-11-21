@@ -86,6 +86,7 @@ import { solveCoupledConstraints } from './cad/constraintSolver'
 import { offsetOpenPath, offsetPolygon } from './cad/sketcher'
 import { getExtrusionOrigin } from './cad/extrusion'
 import { createLoftMesh } from './cad/loft'
+import { createSweepMesh } from './cad/sweep'
 
 const SKETCH_PLANE_Y = 0.6
 
@@ -234,6 +235,37 @@ function buildLoftPart(firstSketch: SketchFeature, secondSketch: SketchFeature, 
     color: existing?.color ?? '#78a9dc', materialId: existing?.materialId ?? 'aluminum', visible: existing?.visible ?? true,
     loftSketchIds: [firstSketch.id, secondSketch.id], loftSketchEntityIds: entityIds,
     operation: `Loft · ${firstSketch.name} to ${secondSketch.name}`,
+  }
+  part.brep = buildMeshBRep(part)
+  return part
+}
+
+function buildSweepPart(profileSketch: SketchFeature, pathSketch: SketchFeature, entityIds: [string, string], existing?: Part): Part {
+  const profileEntity = profileSketch.entities.find((entity) => entity.id === entityIds[0])
+  const pathEntity = pathSketch.entities.find((entity) => entity.id === entityIds[1])
+  if (!profileEntity || !profileEntity.closed || profileEntity.isConstruction || profileEntity.isProjected || profileEntity.type === 'arc') {
+    throw new RangeError(`Sketch ${profileSketch.name} needs its closed sweep profile`)
+  }
+  if (!pathEntity || pathEntity.closed || pathEntity.isConstruction || pathEntity.isProjected || !['line', 'spline'].includes(pathEntity.type)) {
+    throw new RangeError(`Sketch ${pathSketch.name} needs an open line or spline sweep path`)
+  }
+  const profile = closedProfilePoints(profileEntity)
+  if (profile.length < 3 || polygonArea(profile) <= 1e-9 || polygonHasSelfIntersection(profile)) {
+    throw new RangeError(`Sketch ${profileSketch.name} has an invalid sweep profile`)
+  }
+  const profileFrame = sketchPlaneFrame(profileSketch.plane, profileSketch.arbitraryPlane)
+  const pathFrame = sketchPlaneFrame(pathSketch.plane, pathSketch.arbitraryPlane)
+  const profileWorld = profile.map(([u, v]) => profileFrame.origin.clone().addScaledVector(profileFrame.uAxis, u).addScaledVector(profileFrame.vAxis, v))
+  const pathWorld = sketchEntityPoints(pathEntity).map(([u, v]) => pathFrame.origin.clone().addScaledVector(pathFrame.uAxis, u).addScaledVector(pathFrame.vAxis, v))
+  const profileCenter = profileWorld.reduce((sum, point) => sum.add(point), new THREE.Vector3()).multiplyScalar(1 / profileWorld.length)
+  if (profileCenter.distanceTo(pathWorld[0]) > 0.5) throw new RangeError('Sweep path must start at the center of the profile')
+  const sweep = createSweepMesh(profileWorld, pathWorld)
+  const part: Part = {
+    id: existing?.id ?? createFeatureId('sweep'), name: existing?.name ?? 'Sweep',
+    kind: 'custom', size: sweep.size, position: sweep.position, meshData: sweep.meshData,
+    color: existing?.color ?? '#78a9dc', materialId: existing?.materialId ?? 'aluminum', visible: existing?.visible ?? true,
+    sweepSketchIds: [profileSketch.id, pathSketch.id], sweepSketchEntityIds: entityIds,
+    operation: `Sweep · ${profileSketch.name} along ${pathSketch.name}`,
   }
   part.brep = buildMeshBRep(part)
   return part
@@ -593,6 +625,7 @@ function App() {
   const [selectedId, setSelectedId] = useState<string | null>('jaw')
   const [selectedSketchId, setSelectedSketchId] = useState<string | null>(null)
   const [loftTargetSketchId, setLoftTargetSketchId] = useState<string>('')
+  const [sweepTargetSketchId, setSweepTargetSketchId] = useState<string>('')
   const [past, setPast] = useState<ModelSnapshot[]>([])
   const [future, setFuture] = useState<ModelSnapshot[]>([])
   const [sketchEntities, setSketchEntities] = useState<SketchEntity[]>([])
@@ -940,9 +973,9 @@ function App() {
   }, [activeArbitraryPlane, activeProfilePlane, commitParts, extrudeDistance, extrudeMode, notify, parts, profileEntities, selectedSketch, selectedSketchId, setShowExtrudeDialog, sketchStage, sketchType])
 
   function deleteSelectedSketch(sketchId: string) {
-    const dependentParts = parts.filter((part) => part.sketchId === sketchId || part.loftSketchIds?.includes(sketchId))
+    const dependentParts = parts.filter((part) => part.sketchId === sketchId || part.loftSketchIds?.includes(sketchId) || part.sweepSketchIds?.includes(sketchId))
     commitModel({
-      parts: dependentParts.length ? parts.filter((part) => part.sketchId !== sketchId && !part.loftSketchIds?.includes(sketchId)) : parts,
+      parts: dependentParts.length ? parts.filter((part) => part.sketchId !== sketchId && !part.loftSketchIds?.includes(sketchId) && !part.sweepSketchIds?.includes(sketchId)) : parts,
       sketches: sketches.filter((sketch) => sketch.id !== sketchId),
       joints,
     })
@@ -1049,6 +1082,20 @@ function App() {
         }
         try {
           regenerated.set(part.id, buildLoftPart(firstSketch, secondSketch, part.loftSketchEntityIds, part))
+        } catch (error) {
+          notify(`Cannot finish: ${error instanceof Error ? error.message : `${part.name} could not regenerate`}`)
+          return
+        }
+      }
+      for (const part of parts.filter((item) => item.sweepSketchIds?.includes(previous.id))) {
+        const profileSketch = nextSketches.find((sketch) => sketch.id === part.sweepSketchIds?.[0])
+        const pathSketch = nextSketches.find((sketch) => sketch.id === part.sweepSketchIds?.[1])
+        if (!profileSketch || !pathSketch || !part.sweepSketchEntityIds) {
+          notify(`Cannot finish: ${part.name} is missing a sweep section`)
+          return
+        }
+        try {
+          regenerated.set(part.id, buildSweepPart(profileSketch, pathSketch, part.sweepSketchEntityIds, part))
         } catch (error) {
           notify(`Cannot finish: ${error instanceof Error ? error.message : `${part.name} could not regenerate`}`)
           return
@@ -1599,6 +1646,20 @@ function App() {
       setSolidCommand('loft')
       return
     }
+    if (command === 'sweep') {
+      if (!selectedSketch) {
+        notify('Select a finished sketch with a closed profile to use as the sweep section')
+        return
+      }
+      const target = sketches.find((sketch) => sketch.id !== selectedSketch.id && sketch.visible)
+      if (!target) {
+        notify('Create a second sketch containing an open line or spline path')
+        return
+      }
+      setSweepTargetSketchId(target.id)
+      setSolidCommand('sweep')
+      return
+    }
     if (command === 'revolve') {
       if (!selectedSketch) {
         notify('Finish and select a sketch before creating a revolve')
@@ -1658,6 +1719,31 @@ function App() {
 
   async function runSolidCommand() {
     if (!solidCommand) return
+    if (solidCommand === 'sweep') {
+      const profileSketch = selectedSketch
+      const pathSketch = sketches.find((sketch) => sketch.id === sweepTargetSketchId)
+      if (!profileSketch || !pathSketch || profileSketch.id === pathSketch.id) {
+        notify('Choose separate profile and path sketches for the sweep')
+        return
+      }
+      const profileEntity = profileSketch.entities.find((entity) => entity.closed && !entity.isConstruction && !entity.isProjected && entity.type !== 'arc')
+      const pathEntity = pathSketch.entities.find((entity) => !entity.closed && !entity.isConstruction && !entity.isProjected && ['line', 'spline'].includes(entity.type))
+      if (!profileEntity || !pathEntity) {
+        notify('Choose a closed profile sketch and a path sketch with an open line or spline')
+        return
+      }
+      try {
+        const part = buildSweepPart(profileSketch, pathSketch, [profileEntity.id, pathEntity.id])
+        part.name = `Sweep ${parts.filter((item) => item.operation?.startsWith('Sweep')).length + 1}`
+        commitParts([...parts, part])
+        setSelectedId(part.id)
+        setSolidCommand(null)
+        notify('Sweep solid created with faceted B-rep geometry')
+      } catch (error) {
+        notify(error instanceof Error ? error.message : 'Sweep generation failed; check the profile and path')
+      }
+      return
+    }
     if (solidCommand === 'loft') {
       const firstSketch = selectedSketch
       const secondSketch = sketches.find((sketch) => sketch.id === loftTargetSketchId)
@@ -2767,6 +2853,10 @@ function App() {
               <Layers3 size={16} />
               <span>Loft</span>
             </button>
+            <button onClick={() => openSolidCommand('sweep')} disabled={!selectedSketch} title="Sweep a closed sketch profile along an open line or spline">
+              <Move3D size={16} />
+              <span>Sweep</span>
+            </button>
             <span className="solid-ribbon-divider" />
             <button onClick={() => openSolidCommand('fillet')}>
               <Circle size={16} />
@@ -3318,6 +3408,17 @@ function App() {
                     <label>
                       End section sketch:
                       <select aria-label="Loft end section sketch" value={loftTargetSketchId} onChange={(event) => setLoftTargetSketchId(event.target.value)}>
+                        {sketches.filter((sketch) => sketch.id !== selectedSketchId && sketch.visible).map((sketch) => <option key={sketch.id} value={sketch.id}>{sketch.name}</option>)}
+                      </select>
+                    </label>
+                  </>
+                )}
+                {solidCommand === 'sweep' && (
+                  <>
+                    <p style={{ fontSize: 11, color: '#9aa6b2', margin: '0 0 8px' }}>Carries the selected closed profile along an open line or spline. The path must start at the profile center and normal to its plane.</p>
+                    <label>
+                      Path sketch:
+                      <select aria-label="Sweep path sketch" value={sweepTargetSketchId} onChange={(event) => setSweepTargetSketchId(event.target.value)}>
                         {sketches.filter((sketch) => sketch.id !== selectedSketchId && sketch.visible).map((sketch) => <option key={sketch.id} value={sketch.id}>{sketch.name}</option>)}
                       </select>
                     </label>
