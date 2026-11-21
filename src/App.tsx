@@ -122,6 +122,10 @@ function arcPoints(center: [number, number], start: [number, number], end: [numb
 }
 
 function sketchEntityPoints(entity: SketchEntity): [number, number][] {
+  if (entity.type === 'spline' && entity.points.length >= 3) {
+    const curve = new THREE.SplineCurve(entity.points.map(([x, y]) => new THREE.Vector2(x, y)))
+    return curve.getPoints(Math.max(48, entity.points.length * 16)).map((point): [number, number] => [point.x, point.y])
+  }
   if (entity.type === 'rectangle' && entity.points.length >= 2) {
     const [first, second] = entity.points
     return [first, [second[0], first[1]], second, [first[0], second[1]], first]
@@ -573,6 +577,8 @@ function App() {
   const [constructionMode, setConstructionMode] = useState(false)
   const [polygonSides, setPolygonSides] = useState(6)
   const [offsetDistance, setOffsetDistance] = useState(1)
+  const [sketchPatternCount, setSketchPatternCount] = useState(4)
+  const [sketchPatternSpacing, setSketchPatternSpacing] = useState(2)
   const [sketchType, setSketchType] = useState<SketchTool>('rectangle')
   const [sketchPlane, setSketchPlane] = useState<SketchPlane>('top')
   const [sketchStage, setSketchStage] = useState<SketchStage>('idle')
@@ -787,10 +793,11 @@ function App() {
       if (sketchStage === 'drawing' && event.key === 'Escape' && pendingSketchPoints.length) {
         event.preventDefault()
         setPendingSketchPoints([])
-      } else if (sketchStage === 'drawing' && event.key === 'Enter' && sketchType === 'polyline') {
+      } else if (sketchStage === 'drawing' && event.key === 'Enter' && (sketchType === 'polyline' || sketchType === 'spline')) {
         event.preventDefault()
-        if (pendingSketchPoints.length >= 2) {
-          setSketchEntities((items) => [...items, { id: createFeatureId('entity'), type: 'line', points: pendingSketchPoints, closed: false, isConstruction: constructionMode }])
+        const minimumPoints = sketchType === 'spline' ? 3 : 2
+        if (pendingSketchPoints.length >= minimumPoints) {
+          setSketchEntities((items) => [...items, { id: createFeatureId('entity'), type: sketchType === 'spline' ? 'spline' : 'line', points: pendingSketchPoints, closed: false, isConstruction: constructionMode }])
           setPendingSketchPoints([])
         }
       } else if (command && event.key.toLowerCase() === 'z') {
@@ -1050,6 +1057,10 @@ function App() {
       setPendingSketchPoints((points) => [...points, point])
       return
     }
+    if (sketchType === 'spline') {
+      setPendingSketchPoints((points) => [...points, point])
+      return
+    }
     const required = ['arc', 'ellipse', 'slot'].includes(sketchType) ? 3 : 2
     const next = [...pendingSketchPoints, point]
     if (next.length < required) { setPendingSketchPoints(next); return }
@@ -1189,6 +1200,37 @@ function App() {
     setSketchEntities(result.solvedEntities)
     setSketchConstraints(nextConstraints)
     setConstraintMessage(existing.length ? 'Geometry unfixed' : 'Geometry fixed')
+  }
+
+  function mirrorSelectedSketch(axis: 'x' | 'y') {
+    const entity = sketchEntities.find((item) => item.id === selectedSketchEntityId)
+    if (!entity) return
+    const mirrored: SketchEntity = {
+      ...entity,
+      id: createFeatureId('entity'),
+      points: entity.points.map(([x, y]): [number, number] => axis === 'x' ? [x, -y] : [-x, y]),
+    }
+    setSketchEntities((items) => [...items, mirrored])
+    setSelectedSketchEntityId(mirrored.id)
+    notify(`Mirrored geometry about the ${axis.toUpperCase()} axis`)
+  }
+
+  function patternSelectedSketch(axis: 'x' | 'y') {
+    const entity = sketchEntities.find((item) => item.id === selectedSketchEntityId)
+    const count = Math.max(2, Math.min(50, Math.floor(sketchPatternCount)))
+    if (!entity || !Number.isFinite(sketchPatternSpacing) || sketchPatternSpacing <= 0) {
+      notify('Select geometry and enter a positive pattern spacing')
+      return
+    }
+    const copies = Array.from({ length: count - 1 }, (_, index): SketchEntity => ({
+      ...entity,
+      id: createFeatureId('entity'),
+      points: entity.points.map(([x, y]): [number, number] => axis === 'x'
+        ? [x + sketchPatternSpacing * (index + 1), y]
+        : [x, y + sketchPatternSpacing * (index + 1)]),
+    }))
+    setSketchEntities((items) => [...items, ...copies])
+    notify(`Created ${count}-instance ${axis.toUpperCase()} sketch pattern`)
   }
 
   function applySketchOffset() {
@@ -1962,6 +2004,7 @@ function App() {
           preview = [...previewPoints]
           if (preview.length >= 4 && Math.hypot(preview[0][0] - sketchCursorPoint[0], preview[0][1] - sketchCursorPoint[1]) <= 0.35) preview.push(preview[0])
         }
+        else if (sketchType === 'spline' && previewPoints.length >= 3) preview = sketchEntityPoints({ id: 'preview', type: 'spline', points: previewPoints, closed: false })
         else if (sketchType === 'rectangle' && previewPoints.length >= 2) {
           const [a, b] = previewPoints.slice(-2)
           preview = [a, [b[0], a[1]], b, [a[0], b[1]], a]
@@ -2579,14 +2622,22 @@ function App() {
 
           <div className="solid-ribbon-tools">
             <span style={{ fontSize: 10, color: '#9ab99a' }}>DRAW:</span>
-            {(['select', 'line', 'polyline', 'rectangle', 'circle', 'ellipse', 'polygon', 'slot', 'arc', 'trim', 'offset', 'dimension'] as SketchTool[]).map((tool) => (
+            {(['select', 'line', 'polyline', 'spline', 'rectangle', 'circle', 'ellipse', 'polygon', 'slot', 'arc', 'trim', 'offset', 'dimension'] as SketchTool[]).map((tool) => (
               <button key={tool} onClick={() => chooseSketchTool(tool)} style={{ color: sketchType === tool ? '#8be2a5' : '#c1cad5', borderBottom: sketchType === tool ? '2px solid #70c887' : '2px solid transparent' }}>
-                {tool === 'rectangle' || tool === 'polygon' || tool === 'slot' ? <Square size={14} /> : tool === 'circle' || tool === 'ellipse' ? <Circle size={14} /> : tool === 'line' || tool === 'polyline' ? <Ruler size={14} /> : tool === 'arc' ? <Rotate3D size={14} /> : tool === 'trim' ? <Scissors size={14} /> : tool === 'offset' ? <Copy size={14} /> : tool === 'select' ? <Move3D size={14} /> : <Search size={14} />}
+                {tool === 'rectangle' || tool === 'polygon' || tool === 'slot' ? <Square size={14} /> : tool === 'circle' || tool === 'ellipse' ? <Circle size={14} /> : tool === 'line' || tool === 'polyline' || tool === 'spline' ? <Ruler size={14} /> : tool === 'arc' ? <Rotate3D size={14} /> : tool === 'trim' ? <Scissors size={14} /> : tool === 'offset' ? <Copy size={14} /> : tool === 'select' ? <Move3D size={14} /> : <Search size={14} />}
                 <span>{tool[0].toUpperCase() + tool.slice(1)}</span>
               </button>
             ))}
             {sketchType === 'polygon' && <label style={{ fontSize: 10 }}>Sides <input aria-label="Polygon side count" type="number" min="3" max="64" step="1" value={polygonSides} onChange={(event) => setPolygonSides(Math.max(3, Math.min(64, Math.floor(Number(event.target.value) || 3))))} style={{ width: 46 }} /></label>}
             {sketchType === 'offset' && <><input aria-label="Offset distance in millimeters" type="number" step="0.1" value={offsetDistance} onChange={(event) => setOffsetDistance(Number(event.target.value))} style={{ width: 70 }} /><button className="subtle-button" onClick={applySketchOffset} disabled={!selectedSketchEntityId}>Apply offset</button></>}
+            {sketchType === 'select' && selectedSketchEntityId && <>
+              <button className="subtle-button" onClick={() => mirrorSelectedSketch('x')}>Mirror X</button>
+              <button className="subtle-button" onClick={() => mirrorSelectedSketch('y')}>Mirror Y</button>
+              <input aria-label="Sketch pattern instance count" type="number" min="2" max="50" value={sketchPatternCount} onChange={(event) => setSketchPatternCount(Math.max(2, Math.min(50, Math.floor(Number(event.target.value) || 2))))} style={{ width: 48 }} />
+              <input aria-label="Sketch pattern spacing in millimeters" type="number" min="0.01" step="0.1" value={sketchPatternSpacing} onChange={(event) => setSketchPatternSpacing(Number(event.target.value))} style={{ width: 62 }} />
+              <button className="subtle-button" onClick={() => patternSelectedSketch('x')}>Pattern X</button>
+              <button className="subtle-button" onClick={() => patternSelectedSketch('y')}>Pattern Y</button>
+            </>}
             <button className="subtle-button" onClick={toggleSelectedConstruction} title={selectedSketchEntityId ? 'Toggle construction on the selected entity' : 'Draw new entities as construction geometry'}>
               {selectedSketchEntityId ? (sketchEntities.find((entity) => entity.id === selectedSketchEntityId)?.isConstruction ? 'Make profile' : 'Make construction') : `Construction: ${constructionMode ? 'on' : 'off'}`}
             </button>
@@ -2598,7 +2649,7 @@ function App() {
             <button className="subtle-button" onClick={() => setSketchSnapEnabled((enabled) => !enabled)} title="Snap to 0.5 mm grid and nearby sketch points">
               {sketchSnapEnabled ? 'Snap 0.5 mm: on' : 'Snap: off'}
             </button>
-            <span style={{ fontSize: 10, color: '#8b9b8b', padding: '0 6px' }}>{sketchType === 'select' ? 'Click an entity to select · drag to move' : sketchType === 'line' ? 'Click two endpoints' : sketchType === 'polyline' ? 'Click points · click start to close · Enter to finish' : sketchType === 'arc' ? 'Click center, start, end' : sketchType === 'circle' ? 'Click center, then radius' : sketchType === 'ellipse' ? 'Click center, major axis, minor axis' : sketchType === 'polygon' ? 'Click center, then radius' : sketchType === 'slot' ? 'Click end centers, then slot radius' : sketchType === 'trim' ? 'Click an open line segment to trim at intersection' : sketchType === 'offset' ? 'Select a curve, set distance, apply' : sketchType === 'dimension' ? 'Click two points (circle center + edge for radius)' : 'Click two corners'}{!['select', 'dimension', 'trim', 'offset'].includes(sketchType) ? ' · Shift bypasses snap' : ''}</span>
+            <span style={{ fontSize: 10, color: '#8b9b8b', padding: '0 6px' }}>{sketchType === 'select' ? 'Click an entity to select · drag to move' : sketchType === 'line' ? 'Click two endpoints' : sketchType === 'polyline' ? 'Click points · click start to close · Enter to finish' : sketchType === 'spline' ? 'Click control points · Enter to finish (3+ points)' : sketchType === 'arc' ? 'Click center, start, end' : sketchType === 'circle' ? 'Click center, then radius' : sketchType === 'ellipse' ? 'Click center, major axis, minor axis' : sketchType === 'polygon' ? 'Click center, then radius' : sketchType === 'slot' ? 'Click end centers, then slot radius' : sketchType === 'trim' ? 'Click an open line segment to trim at intersection' : sketchType === 'offset' ? 'Select a curve, set distance, apply' : sketchType === 'dimension' ? 'Click two points (circle center + edge for radius)' : 'Click two corners'}{!['select', 'dimension', 'trim', 'offset'].includes(sketchType) ? ' · Shift bypasses snap' : ''}</span>
             {sketchType === 'select' && selectedSketchEntityId && <button className="subtle-button" onClick={deleteSelectedSketchEntity}><Trash2 size={13} /> Delete entity</button>}
             {sketchType === 'dimension' && dimensionPointRefs.length === 2 && (
               <>
