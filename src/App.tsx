@@ -1118,6 +1118,33 @@ function App() {
   }, [sketchEntities, sketchSnapEnabled])
 
   const addDimensionPoint = useCallback((point: [number, number]) => {
+    const nearestCurve = sketchEntities
+      .filter((entity) => ['line', 'circle', 'arc'].includes(entity.type))
+      .map((entity) => ({ entity, distance: sketchEntityDistance(entity, point) }))
+      .filter((item) => item.distance <= 0.28)
+      .sort((a, b) => a.distance - b.distance)[0]
+    if (nearestCurve) {
+      const { entity } = nearestCurve
+      let firstIndex = 0, secondIndex = 1
+      if (entity.type === 'line') {
+        let segmentDistance = Infinity
+        const path = sketchEntityPoints(entity)
+        for (let index = 0; index < path.length - 1; index++) {
+          const a = path[index], b = path[index + 1]
+          const dx = b[0] - a[0], dy = b[1] - a[1]
+          const t = Math.max(0, Math.min(1, ((point[0] - a[0]) * dx + (point[1] - a[1]) * dy) / (dx * dx + dy * dy || 1)))
+          const distance = Math.hypot(point[0] - a[0] - dx * t, point[1] - a[1] - dy * t)
+          if (distance < segmentDistance) { segmentDistance = distance; firstIndex = index; secondIndex = (index + 1) % entity.points.length }
+        }
+      }
+      const first = entity.points[firstIndex], second = entity.points[secondIndex]
+      if (first && second) {
+        setDimensionPointRefs([{ entityId: entity.id, pointIndex: firstIndex }, { entityId: entity.id, pointIndex: secondIndex }])
+        setDimensionValue(Number(Math.hypot(first[0] - second[0], first[1] - second[1]).toFixed(2)))
+        notify(entity.type === 'circle' || entity.type === 'arc' ? 'Radius selected · enter a value and apply' : 'Line length selected · enter a value and apply')
+        return
+      }
+    }
     let nearest: { entityId: string; pointIndex: number; distance: number; coordinate: [number, number] } | null = null
     for (const entity of sketchEntities) {
       for (let pointIndex = 0; pointIndex < entity.points.length; pointIndex++) {
@@ -1127,7 +1154,7 @@ function App() {
       }
     }
     if (!nearest || nearest.distance > 0.6) {
-      notify('Click within 0.6 mm of a sketch point to dimension it')
+      notify('Click a line or circle/arc edge, or click two sketch points')
       return
     }
     const ref = { entityId: nearest.entityId, pointIndex: nearest.pointIndex }
@@ -2695,7 +2722,7 @@ function App() {
             <button className="subtle-button" onClick={() => setSketchSnapEnabled((enabled) => !enabled)} title="Snap to 0.5 mm grid and nearby sketch points">
               {sketchSnapEnabled ? 'Snap 0.5 mm: on' : 'Snap: off'}
             </button>
-            <span style={{ fontSize: 10, color: '#8b9b8b', padding: '0 6px' }}>{sketchType === 'select' ? 'Click to select/drag · Shift-click a second line for relations' : sketchType === 'line' ? 'Click two endpoints' : sketchType === 'polyline' ? 'Click points · click start to close · Enter to finish' : sketchType === 'spline' ? 'Click control points · Enter to finish (3+ points)' : sketchType === 'arc' ? 'Click center, start, end' : sketchType === 'circle' ? 'Click center, then radius' : sketchType === 'ellipse' ? 'Click center, major axis, minor axis' : sketchType === 'polygon' ? 'Click center, then radius' : sketchType === 'slot' ? 'Click end centers, then slot radius' : sketchType === 'trim' ? 'Click an open line segment to trim at intersection' : sketchType === 'offset' ? 'Select a curve, set distance, apply' : sketchType === 'dimension' ? 'Click two points (circle center + edge for radius)' : 'Click two corners'}{!['select', 'dimension', 'trim', 'offset'].includes(sketchType) ? ' · Shift bypasses snap' : ''}</span>
+            <span style={{ fontSize: 10, color: '#8b9b8b', padding: '0 6px' }}>{sketchType === 'select' ? 'Click to select/drag · Shift-click a second line for relations' : sketchType === 'line' ? 'Click two endpoints' : sketchType === 'polyline' ? 'Click points · click start to close · Enter to finish' : sketchType === 'spline' ? 'Click control points · Enter to finish (3+ points)' : sketchType === 'arc' ? 'Click center, start, end' : sketchType === 'circle' ? 'Click center, then radius' : sketchType === 'ellipse' ? 'Click center, major axis, minor axis' : sketchType === 'polygon' ? 'Click center, then radius' : sketchType === 'slot' ? 'Click end centers, then slot radius' : sketchType === 'trim' ? 'Click an open line segment to trim at intersection' : sketchType === 'offset' ? 'Select a curve, set distance, apply' : sketchType === 'dimension' ? 'Click a line/circle/arc for length or radius, or choose two points' : 'Click two corners'}{!['select', 'dimension', 'trim', 'offset'].includes(sketchType) ? ' · Shift bypasses snap' : ''}</span>
             {sketchType === 'select' && selectedSketchEntityId && <button className="subtle-button" onClick={deleteSelectedSketchEntity}><Trash2 size={13} /> Delete entity</button>}
             {sketchType === 'dimension' && dimensionPointRefs.length === 2 && (
               <>
