@@ -80,7 +80,7 @@ import { generateCAMToolpaths } from './cad/cam'
 import { generateEngineeringDrawingSVG } from './cad/drawing'
 import { exportToSTEP } from './cad/stepExporter'
 import { SCRIPT_TEMPLATES, executeCADScript } from './cad/automate'
-import { raycastPlanarFace } from './cad/brep'
+import { getPartBRep, raycastPlanarFace } from './cad/brep'
 import { solveCoupledConstraints } from './cad/constraintSolver'
 import { offsetOpenPath, offsetPolygon } from './cad/sketcher'
 
@@ -1214,10 +1214,61 @@ function App() {
 
   function toggleSelectedConstruction() {
     if (selectedSketchEntityId) {
+      if (sketchEntities.find((entity) => entity.id === selectedSketchEntityId)?.isProjected) {
+        notify('Projected references stay construction geometry; trace them to make editable profile geometry')
+        return
+      }
       setSketchEntities((entities) => entities.map((entity) => entity.id === selectedSketchEntityId ? { ...entity, isConstruction: !entity.isConstruction } : entity))
     } else {
       setConstructionMode((enabled) => !enabled)
     }
+  }
+
+  function projectVisibleSketchEdges() {
+    const frame = sketchPlaneFrame(sketchPlane, activeArbitraryPlane ?? undefined)
+    const existingSources = new Set(sketchEntities.filter((entity) => entity.isProjected).map((entity) => `${entity.sourcePartId}:${entity.sourceEdgeId}`))
+    const projected: SketchEntity[] = []
+    for (const part of parts.filter((item) => item.visible)) {
+      const brep = getPartBRep(part)
+      const vertices = new Map(brep.vertices.map((vertex) => [vertex.id, vertex.point]))
+      const loops = new Map(brep.loops.map((loop) => [loop.id, loop]))
+      for (const edge of brep.edges) {
+        const sourceKey = `${part.id}:${edge.id}`
+        if (existingSources.has(sourceKey)) continue
+        const toLocal = (point: [number, number, number]): [number, number] => {
+          const relative = new THREE.Vector3(...point).sub(frame.origin)
+          return [Number(relative.dot(frame.uAxis).toFixed(4)), Number(relative.dot(frame.vAxis).toFixed(4))]
+        }
+        let entity: SketchEntity | null = null
+        if (edge.curveType === 'line') {
+          const start = vertices.get(edge.startVertexId), end = vertices.get(edge.endVertexId)
+          if (!start || !end) continue
+          const a = toLocal(start), b = toLocal(end)
+          if (Math.hypot(a[0] - b[0], a[1] - b[1]) < 1e-4) continue
+          entity = { id: createFeatureId('projection'), type: 'line', points: [a, b], closed: false, isConstruction: true, isProjected: true, sourcePartId: part.id, sourceEdgeId: edge.id }
+        } else if (edge.curveType === 'circle' && edge.center && edge.radius) {
+          const edgeLoop = brep.loops.find((loop) => loop.edgeIds.includes(edge.id))
+          const planarFace = brep.faces.find((face) => face.surfaceType === 'plane' && (loops.get(face.outerLoopId)?.edgeIds.includes(edge.id) || face.innerLoopIds.some((id) => loops.get(id)?.edgeIds.includes(edge.id))))
+          if (!edgeLoop || !planarFace) continue
+          const normal = new THREE.Vector3(...planarFace.normal).normalize()
+          const axisU = new THREE.Vector3(...planarFace.uAxis).addScaledVector(normal, -new THREE.Vector3(...planarFace.uAxis).dot(normal)).normalize()
+          if (axisU.lengthSq() < 1e-8) continue
+          const axisV = new THREE.Vector3().crossVectors(normal, axisU).normalize()
+          const center = new THREE.Vector3(...edge.center)
+          const centerLocal = toLocal(edge.center)
+          const xLocal = toLocal(center.clone().addScaledVector(axisU, edge.radius).toArray() as [number, number, number])
+          const yLocal = toLocal(center.clone().addScaledVector(axisV, edge.radius).toArray() as [number, number, number])
+          entity = { id: createFeatureId('projection'), type: 'ellipse', points: [centerLocal, xLocal, yLocal], closed: true, isConstruction: true, isProjected: true, sourcePartId: part.id, sourceEdgeId: edge.id }
+        }
+        if (!entity) continue
+        projected.push(entity)
+        existingSources.add(sourceKey)
+      }
+    }
+    if (!projected.length) { notify('No new projectable solid edges were found'); return }
+    setSketchEntities((entities) => [...entities, ...projected])
+    setSelectedSketchEntityId(projected[0].id)
+    notify(`Projected ${projected.length} solid edge reference(s)`)
   }
 
   function toggleSelectedLineRelation(type: 'horizontal' | 'vertical') {
@@ -1252,6 +1303,7 @@ function App() {
   function toggleSelectedFix() {
     const entity = sketchEntities.find((item) => item.id === selectedSketchEntityId)
     if (!entity) return
+    if (entity.isProjected) { notify('Projected geometry is reference-only'); return }
     const existing = sketchConstraints.filter((constraint) => constraint.type === 'fixed' && constraint.entityIds[0] === entity.id)
     const nextConstraints = existing.length
       ? sketchConstraints.filter((constraint) => !(constraint.type === 'fixed' && constraint.entityIds[0] === entity.id))
@@ -2118,7 +2170,7 @@ function App() {
         })
         const geometry = new THREE.BufferGeometry()
         geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
-        const color = entity.isConstruction ? '#f5a84e' : sketchStage === 'drawing' ? (entity.id === selectedSketchEntityId ? '#ffc46a' : '#76e7a5') : '#ffad48'
+        const color = entity.isProjected ? '#c790ff' : entity.isConstruction ? '#f5a84e' : sketchStage === 'drawing' ? (entity.id === selectedSketchEntityId ? '#ffc46a' : '#76e7a5') : '#ffad48'
         const material = entity.isConstruction
           ? new THREE.LineDashedMaterial({ color, dashSize: 0.18, gapSize: 0.1, depthTest: false })
           : new THREE.LineBasicMaterial({ color, depthTest: false })
@@ -2704,9 +2756,10 @@ function App() {
               <button className="subtle-button" onClick={() => patternSelectedSketch('x')}>Pattern X</button>
               <button className="subtle-button" onClick={() => patternSelectedSketch('y')}>Pattern Y</button>
             </>}
-            <button className="subtle-button" onClick={toggleSelectedConstruction} title={selectedSketchEntityId ? 'Toggle construction on the selected entity' : 'Draw new entities as construction geometry'}>
-              {selectedSketchEntityId ? (sketchEntities.find((entity) => entity.id === selectedSketchEntityId)?.isConstruction ? 'Make profile' : 'Make construction') : `Construction: ${constructionMode ? 'on' : 'off'}`}
+            <button className="subtle-button" onClick={toggleSelectedConstruction} disabled={Boolean(selectedSketchEntityId && sketchEntities.find((entity) => entity.id === selectedSketchEntityId)?.isProjected)} title={selectedSketchEntityId ? 'Toggle construction on the selected entity' : 'Draw new entities as construction geometry'}>
+              {selectedSketchEntityId ? (sketchEntities.find((entity) => entity.id === selectedSketchEntityId)?.isProjected ? 'Projected ref' : sketchEntities.find((entity) => entity.id === selectedSketchEntityId)?.isConstruction ? 'Make profile' : 'Make construction') : `Construction: ${constructionMode ? 'on' : 'off'}`}
             </button>
+            <button className="subtle-button" onClick={projectVisibleSketchEdges} title="Project straight edges from visible solids as reference geometry">Project edges</button>
             {selectedSketchEntityId && sketchEntities.find((entity) => entity.id === selectedSketchEntityId)?.type === 'line' && <>
               <button className="subtle-button" onClick={() => toggleSelectedLineRelation('horizontal')}>Horizontal</button>
               <button className="subtle-button" onClick={() => toggleSelectedLineRelation('vertical')}>Vertical</button>

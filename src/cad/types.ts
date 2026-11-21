@@ -106,6 +106,9 @@ export type SketchEntity = {
   points: [number, number][]
   closed: boolean
   isConstruction?: boolean
+  isProjected?: boolean
+  sourcePartId?: string
+  sourceEdgeId?: string
   radius?: number
   sides?: number
 }
