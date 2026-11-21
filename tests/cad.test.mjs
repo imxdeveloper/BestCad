@@ -90,6 +90,28 @@ test('constraint solver supports coincident points, fixed points, and target ang
   assert.ok(Math.abs(Math.atan2(Math.sin(secondAngle - firstAngle - Math.PI / 2), Math.cos(secondAngle - firstAngle - Math.PI / 2))) < 1e-4)
 })
 
+test('endpoint-on-line and concentric relations solve their intended geometry', () => {
+  const endpoint = solveCoupledConstraints([
+    { id: 'moving', type: 'line', points: [[2, 4], [3, 6]], closed: false },
+    { id: 'target', type: 'line', points: [[0, 0], [8, 0]], closed: false },
+  ], [{ id: 'on-line', type: 'point_on_line', entityIds: ['moving', 'target'], pointIndices: [0, 0] }])
+  const [point] = endpoint.solvedEntities[0].points
+  const [lineStart, lineEnd] = endpoint.solvedEntities[1].points
+  const lineDx = lineEnd[0] - lineStart[0]
+  const lineDy = lineEnd[1] - lineStart[1]
+  assert.ok(endpoint.diagnostics.converged)
+  assert.ok(Math.abs((point[0] - lineStart[0]) * lineDy - (point[1] - lineStart[1]) * lineDx) / Math.hypot(lineDx, lineDy) < 1e-4)
+
+  const concentric = solveCoupledConstraints([
+    { id: 'outer', type: 'circle', points: [[0, 0], [5, 0]], closed: true, radius: 5 },
+    { id: 'inner', type: 'circle', points: [[8, 6], [9, 6]], closed: true, radius: 1 },
+  ], [{ id: 'centers', type: 'concentric', entityIds: ['outer', 'inner'] }])
+  const [outerCenter] = concentric.solvedEntities[0].points
+  const [innerCenter] = concentric.solvedEntities[1].points
+  assert.ok(concentric.diagnostics.converged)
+  assert.ok(Math.hypot(outerCenter[0] - innerCenter[0], outerCenter[1] - innerCenter[1]) < 1e-4)
+})
+
 test('polygon offset returns finite points and preserves vertex count', () => {
   const result = offsetPolygon([[0, 0], [10, 0], [10, 10], [0, 10]], 1)
   assert.equal(result.length, 4)

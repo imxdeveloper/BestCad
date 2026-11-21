@@ -117,6 +117,19 @@ export function solveCoupledConstraints(
           const extent = c.type === 'width' ? Math.abs(second[0] - first[0]) : Math.abs(second[1] - first[1])
           residuals.push(extent - (c.value ?? 10))
         }
+      } else if (c.type === 'point_on_line') {
+        const point = readPt(c.entityIds[0], c.pointIndices?.[0] ?? 0)
+        const start = readPt(c.entityIds[1], c.pointIndices?.[1] ?? 0)
+        const end = readPt(c.entityIds[1], (c.pointIndices?.[1] ?? 0) + 1)
+        const dx = end[0] - start[0], dy = end[1] - start[1]
+        const length = Math.hypot(dx, dy)
+        if (length > 1e-9) residuals.push(((point[0] - start[0]) * dy - (point[1] - start[1]) * dx) / length)
+      } else if (c.type === 'concentric') {
+        if (c.entityIds.length >= 2) {
+          const centerA = readPt(c.entityIds[0], 0)
+          const centerB = readPt(c.entityIds[1], 0)
+          residuals.push(centerA[0] - centerB[0], centerA[1] - centerB[1])
+        }
       } else if (c.type === 'parallel') {
         if (c.entityIds.length >= 2) {
           const p1 = readPt(c.entityIds[0], 0)

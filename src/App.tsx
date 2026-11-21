@@ -1276,14 +1276,20 @@ function App() {
     setConstraintMessage(`${type} relation ${existing ? 'removed' : 'applied'}`)
   }
 
-  function toggleSelectedPairRelation(type: 'parallel' | 'perpendicular' | 'equal_length') {
+  function toggleSelectedPairRelation(type: 'parallel' | 'perpendicular' | 'equal_length' | 'point_on_line' | 'concentric') {
     const first = sketchEntities.find((item) => item.id === selectedSketchEntityId)
     const second = sketchEntities.find((item) => item.id === relatedSketchEntityId)
-    if (!first || !second || first.id === second.id || first.type !== 'line' || second.type !== 'line') return
-    const existing = sketchConstraints.find((constraint) => constraint.type === type && constraint.entityIds.includes(first.id) && constraint.entityIds.includes(second.id))
+    if (!first || !second || first.id === second.id) return
+    const linePair = first.type === 'line' && second.type === 'line'
+    const centerEntity = (entity: SketchEntity) => ['circle', 'arc', 'ellipse'].includes(entity.type)
+    if ((['parallel', 'perpendicular', 'equal_length', 'point_on_line'].includes(type) && !linePair) || (type === 'concentric' && (!centerEntity(first) || !centerEntity(second)))) return
+    if (type === 'point_on_line' && first.isProjected) { notify('Projected geometry is reference-only'); return }
+    if (type === 'concentric' && (first.isProjected || second.isProjected)) { notify('Projected geometry is reference-only'); return }
+    if (type === 'point_on_line' && Math.hypot(second.points[1][0] - second.points[0][0], second.points[1][1] - second.points[0][1]) < 1e-9) { notify('The target line has zero length'); return }
+    const existing = sketchConstraints.find((constraint) => constraint.type === type && constraint.entityIds[0] === first.id && constraint.entityIds[1] === second.id)
     const nextConstraints = existing
       ? sketchConstraints.filter((constraint) => constraint.id !== existing.id)
-      : [...sketchConstraints, { id: createFeatureId('constraint'), type, entityIds: [first.id, second.id] }]
+      : [...sketchConstraints, { id: createFeatureId('constraint'), type, entityIds: [first.id, second.id], ...(type === 'point_on_line' ? { pointIndices: [0, 0] as [number, number] } : {}) }]
     const result = solveCoupledConstraints(sketchEntities, nextConstraints)
     if (!result.diagnostics.converged) { notify(`Could not apply ${type.replace('_', ' ')} relation`); return }
     setSketchEntities(result.solvedEntities)
@@ -2869,10 +2875,14 @@ function App() {
               <button className="subtle-button" onClick={() => toggleSelectedLineRelation('vertical')}>Vertical</button>
             </>}
             {relatedSketchEntityId && <>
-              <span style={{ fontSize: 10, color: '#9ab99a' }}>2 lines selected</span>
-              <button className="subtle-button" onClick={() => toggleSelectedPairRelation('parallel')}>Parallel</button>
-              <button className="subtle-button" onClick={() => toggleSelectedPairRelation('perpendicular')}>Perpendicular</button>
-              <button className="subtle-button" onClick={() => toggleSelectedPairRelation('equal_length')}>Equal</button>
+              <span style={{ fontSize: 10, color: '#9ab99a' }}>2 entities selected</span>
+              {selectedSketchEntityId && sketchEntities.find((entity) => entity.id === selectedSketchEntityId)?.type === 'line' && sketchEntities.find((entity) => entity.id === relatedSketchEntityId)?.type === 'line' && <>
+                <button className="subtle-button" onClick={() => toggleSelectedPairRelation('parallel')}>Parallel</button>
+                <button className="subtle-button" onClick={() => toggleSelectedPairRelation('perpendicular')}>Perpendicular</button>
+                <button className="subtle-button" onClick={() => toggleSelectedPairRelation('equal_length')}>Equal</button>
+                <button className="subtle-button" onClick={() => toggleSelectedPairRelation('point_on_line')}>Endpoint on line</button>
+              </>}
+              {selectedSketchEntityId && ['circle', 'arc', 'ellipse'].includes(sketchEntities.find((entity) => entity.id === selectedSketchEntityId)?.type ?? '') && ['circle', 'arc', 'ellipse'].includes(sketchEntities.find((entity) => entity.id === relatedSketchEntityId)?.type ?? '') && <button className="subtle-button" onClick={() => toggleSelectedPairRelation('concentric')}>Concentric</button>}
               <button className="subtle-button" onClick={() => setRelatedSketchEntityId(null)}>Clear pair</button>
             </>}
             {selectedSketchEntityId && <button className="subtle-button" onClick={toggleSelectedFix}>{sketchConstraints.some((constraint) => constraint.type === 'fixed' && constraint.entityIds[0] === selectedSketchEntityId) ? 'Unfix' : 'Fix'}</button>}
