@@ -81,6 +81,7 @@ import { generateEngineeringDrawingSVG } from './cad/drawing'
 import { exportToSTEP } from './cad/stepExporter'
 import { SCRIPT_TEMPLATES, executeCADScript } from './cad/automate'
 import { getPartBRep, raycastPlanarFace } from './cad/brep'
+import { getSketchProjectionFrame, projectPartEdgeToSketch, syncProjectedSketches } from './cad/sketchProjection'
 import { solveCoupledConstraints } from './cad/constraintSolver'
 import { offsetOpenPath, offsetPolygon } from './cad/sketcher'
 
@@ -544,7 +545,7 @@ function App() {
       const saved = localStorage.getItem('bestcad-document') ?? localStorage.getItem('clonecad-document')
       if (saved) {
         const parsed = JSON.parse(saved)
-        if (Array.isArray(parsed.sketches)) return parsed.sketches
+        if (Array.isArray(parsed.sketches)) return syncProjectedSketches(parsed.sketches, Array.isArray(parsed.parts) ? parsed.parts : initialParts)
       }
     } catch {}
     return []
@@ -675,7 +676,7 @@ function App() {
     setPast((items) => [...items.slice(-29), { parts, sketches, joints }])
     setFuture([])
     setParts(next.parts)
-    setSketches(next.sketches)
+    setSketches(syncProjectedSketches(next.sketches, next.parts))
     if (next.joints) setJoints(next.joints)
     setSavedAt('Unsaved changes')
   }, [joints, parts, sketches, setJoints])
@@ -741,7 +742,7 @@ function App() {
         throw new Error('Document contains an invalid sketch')
       }
       setParts(candidate.parts)
-      setSketches(candidate.sketches ?? [])
+      setSketches(syncProjectedSketches(candidate.sketches ?? [], candidate.parts))
       setJoints(candidate.joints ?? [])
       setVersions(candidate.versions ?? [])
       setDocumentName(typeof candidate.documentName === 'string' && candidate.documentName.trim() ? candidate.documentName : file.name.replace(/\.bestcad\.json$/i, ''))
@@ -765,7 +766,7 @@ function App() {
     const previous = past[past.length - 1]
     setFuture((items) => [{ parts, sketches, joints }, ...items])
     setParts(previous.parts)
-    setSketches(previous.sketches)
+    setSketches(syncProjectedSketches(previous.sketches, previous.parts))
     if (previous.joints) setJoints(previous.joints)
     if (selectedId && !previous.parts.some((part) => part.id === selectedId)) setSelectedId(null)
     if (selectedSketchId && !previous.sketches.some((sketch) => sketch.id === selectedSketchId)) setSelectedSketchId(null)
@@ -778,7 +779,7 @@ function App() {
     const next = future[0]
     setPast((items) => [...items, { parts, sketches, joints }])
     setParts(next.parts)
-    setSketches(next.sketches)
+    setSketches(syncProjectedSketches(next.sketches, next.parts))
     if (next.joints) setJoints(next.joints)
     if (selectedId && !next.parts.some((part) => part.id === selectedId)) setSelectedId(null)
     if (selectedSketchId && !next.sketches.some((sketch) => sketch.id === selectedSketchId)) setSelectedSketchId(null)
@@ -1249,43 +1250,21 @@ function App() {
   }
 
   function projectVisibleSketchEdges() {
-    const frame = sketchPlaneFrame(sketchPlane, activeArbitraryPlane ?? undefined)
+    const frame = getSketchProjectionFrame({ plane: sketchPlane, arbitraryPlane: activeArbitraryPlane ?? undefined })
     const existingSources = new Set(sketchEntities.filter((entity) => entity.isProjected).map((entity) => `${entity.sourcePartId}:${entity.sourceEdgeId}`))
     const projected: SketchEntity[] = []
     for (const part of parts.filter((item) => item.visible)) {
-      const brep = getPartBRep(part)
-      const vertices = new Map(brep.vertices.map((vertex) => [vertex.id, vertex.point]))
-      const loops = new Map(brep.loops.map((loop) => [loop.id, loop]))
+      let brep
+      try { brep = getPartBRep(part) }
+      catch { continue }
       for (const edge of brep.edges) {
-        const sourceKey = `${part.id}:${edge.id}`
+        const edgeId = edge.id
+        const sourceKey = `${part.id}:${edgeId}`
         if (existingSources.has(sourceKey)) continue
-        const toLocal = (point: [number, number, number]): [number, number] => {
-          const relative = new THREE.Vector3(...point).sub(frame.origin)
-          return [Number(relative.dot(frame.uAxis).toFixed(4)), Number(relative.dot(frame.vAxis).toFixed(4))]
-        }
-        let entity: SketchEntity | null = null
-        if (edge.curveType === 'line') {
-          const start = vertices.get(edge.startVertexId), end = vertices.get(edge.endVertexId)
-          if (!start || !end) continue
-          const a = toLocal(start), b = toLocal(end)
-          if (Math.hypot(a[0] - b[0], a[1] - b[1]) < 1e-4) continue
-          entity = { id: createFeatureId('projection'), type: 'line', points: [a, b], closed: false, isConstruction: true, isProjected: true, sourcePartId: part.id, sourceEdgeId: edge.id }
-        } else if (edge.curveType === 'circle' && edge.center && edge.radius) {
-          const edgeLoop = brep.loops.find((loop) => loop.edgeIds.includes(edge.id))
-          const planarFace = brep.faces.find((face) => face.surfaceType === 'plane' && (loops.get(face.outerLoopId)?.edgeIds.includes(edge.id) || face.innerLoopIds.some((id) => loops.get(id)?.edgeIds.includes(edge.id))))
-          if (!edgeLoop || !planarFace) continue
-          const normal = new THREE.Vector3(...planarFace.normal).normalize()
-          const axisU = new THREE.Vector3(...planarFace.uAxis).addScaledVector(normal, -new THREE.Vector3(...planarFace.uAxis).dot(normal)).normalize()
-          if (axisU.lengthSq() < 1e-8) continue
-          const axisV = new THREE.Vector3().crossVectors(normal, axisU).normalize()
-          const center = new THREE.Vector3(...edge.center)
-          const centerLocal = toLocal(edge.center)
-          const xLocal = toLocal(center.clone().addScaledVector(axisU, edge.radius).toArray() as [number, number, number])
-          const yLocal = toLocal(center.clone().addScaledVector(axisV, edge.radius).toArray() as [number, number, number])
-          entity = { id: createFeatureId('projection'), type: 'ellipse', points: [centerLocal, xLocal, yLocal], closed: true, isConstruction: true, isProjected: true, sourcePartId: part.id, sourceEdgeId: edge.id }
-        }
-        if (!entity) continue
-        projected.push(entity)
+        let geometry: ReturnType<typeof projectPartEdgeToSketch> = null
+        try { geometry = projectPartEdgeToSketch(part, edgeId, frame, brep) } catch { continue }
+        if (!geometry) continue
+        projected.push({ ...geometry, id: createFeatureId('projection'), isConstruction: true, isProjected: true, sourcePartId: part.id, sourceEdgeId: edgeId })
         existingSources.add(sourceKey)
       }
     }
@@ -2194,7 +2173,7 @@ function App() {
         })
         const geometry = new THREE.BufferGeometry()
         geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
-        const color = entity.isProjected ? '#c790ff' : entity.isConstruction ? '#f5a84e' : sketchStage === 'drawing' ? (entity.id === selectedSketchEntityId ? '#ffc46a' : '#76e7a5') : '#ffad48'
+        const color = entity.isBrokenProjection ? '#ff6573' : entity.isProjected ? '#c790ff' : entity.isConstruction ? '#f5a84e' : sketchStage === 'drawing' ? (entity.id === selectedSketchEntityId ? '#ffc46a' : '#76e7a5') : '#ffad48'
         const material = entity.isConstruction
           ? new THREE.LineDashedMaterial({ color, dashSize: 0.18, gapSize: 0.1, depthTest: false })
           : new THREE.LineBasicMaterial({ color, depthTest: false })
@@ -2829,6 +2808,7 @@ function App() {
                 </>}
             </>}
             {sketchDiagnostics && <span title="Estimated sketch constraint status" style={{ fontSize: 10, color: sketchDiagnostics.status === 'fully_defined' ? '#83e0a2' : sketchDiagnostics.status === 'over_defined' || sketchDiagnostics.status === 'inconsistent' ? '#ff9b86' : '#9ab99a' }}>{sketchDiagnostics.status.replace('_', ' ')} · {sketchDiagnostics.dof} DOF</span>}
+            {sketchEntities.some((entity) => entity.isBrokenProjection) && <span title="Some projected references no longer match a source edge" style={{ fontSize: 10, color: '#ff6573' }}>{sketchEntities.filter((entity) => entity.isBrokenProjection).length} broken reference(s)</span>}
             {constraintMessage && <span style={{ fontSize: 10, color: '#9ab99a' }}>{constraintMessage}</span>}
             <button className="subtle-button" onClick={cancelSketch}><X size={13} /> Cancel</button>
             <button className="primary-button" onClick={finishSketch}><Save size={13} /> Finish Sketch</button>

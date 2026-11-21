@@ -9,7 +9,8 @@ import { solveStaticStressFEA } from '../src/cad/simulation.ts'
 import { computeGeometryMetrics, calculateDistance } from '../src/cad/inspection.ts'
 import { generateEngineeringDrawingSVG } from '../src/cad/drawing.ts'
 import { executeCADScript, SCRIPT_TEMPLATES } from '../src/cad/automate.ts'
-import { buildBoxBRep, buildExtrusionBRep } from '../src/cad/brep.ts'
+import { buildBoxBRep, buildExtrusionBRep, getPartBRep } from '../src/cad/brep.ts'
+import { getSketchProjectionFrame, projectPartEdgeToSketch, syncProjectedSketches } from '../src/cad/sketchProjection.ts'
 import { MATERIAL_PRESETS } from '../src/cad/materials.ts'
 
 function makePart(overrides = {}) {
@@ -86,6 +87,30 @@ test('polygon offset expands in the same direction for either winding', () => {
 
 test('open path offset preserves direction and moves points by the requested normal distance', () => {
   assert.deepEqual(offsetOpenPath([[0, 0], [10, 0]], 2), [[0, 2], [10, 2]])
+})
+
+test('projected sketch references follow source edges and report broken references', () => {
+  const part = makePart()
+  const brep = getPartBRep(part)
+  const frame = getSketchProjectionFrame({ plane: 'front' })
+  const candidate = brep.edges.map((edge) => ({ edge, geometry: projectPartEdgeToSketch(part, edge.id, frame, brep) }))
+    .find((item) => item.geometry?.type === 'line')
+  assert.ok(candidate)
+  const entity = {
+    id: 'projection-1', ...candidate.geometry, isConstruction: true, isProjected: true,
+    sourcePartId: part.id, sourceEdgeId: candidate.edge.id,
+  }
+  const sketch = { id: 'sketch-1', name: 'Front', plane: 'front', entities: [entity], constraints: [] }
+  const moved = { ...part, position: [part.position[0] + 3, part.position[1], part.position[2]] }
+  const updated = syncProjectedSketches([sketch], [moved])[0].entities[0]
+  assert.equal(updated.isBrokenProjection, false)
+  assert.ok(updated.points.every((point, index) => Math.abs(point[0] - entity.points[index][0] - 3) < 1e-4))
+
+  const missing = syncProjectedSketches([sketch], [])[0].entities[0]
+  assert.equal(missing.isBrokenProjection, true)
+  const recovered = syncProjectedSketches([{ ...sketch, entities: [missing] }], [part])[0].entities[0]
+  assert.equal(recovered.isBrokenProjection, false)
+  assert.deepEqual(recovered.points, entity.points)
 })
 
 test('constraint diagnostics use independent degrees of freedom and report redundant relations', () => {

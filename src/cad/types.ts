@@ -107,6 +107,7 @@ export type SketchEntity = {
   closed: boolean
   isConstruction?: boolean
   isProjected?: boolean
+  isBrokenProjection?: boolean
   sourcePartId?: string
   sourceEdgeId?: string
   radius?: number
