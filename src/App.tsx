@@ -1986,9 +1986,13 @@ function App() {
   }
 
   function exportSTEPFile() {
-    exportToSTEP(parts, documentName)
-    setExportDropdownOpen(false)
-    notify('ISO 10303 STEP exported')
+    try {
+      exportToSTEP(parts, documentName)
+      setExportDropdownOpen(false)
+      notify('AP214 faceted STEP exported · curved surfaces are tessellated')
+    } catch (error) {
+      notify(error instanceof Error ? error.message : 'STEP export failed; check that each visible body is a closed solid')
+    }
   }
 
   function exportDrawingSVG() {
@@ -2749,7 +2753,7 @@ function App() {
             {exportDropdownOpen && (
               <div className="export-dropdown">
                 <button className="export-item-btn" onClick={exportSTEPFile}>
-                  <span>ISO 10303 STEP</span>
+                  <span>STEP AP214 (faceted)</span>
                   <span>.stp</span>
                 </button>
                 <button className="export-item-btn" onClick={exportBinarySTL}>

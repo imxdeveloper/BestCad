@@ -14,6 +14,7 @@ import { getSketchProjectionFrame, projectPartEdgeToSketch, syncProjectedSketche
 import { getExtrusionOrigin } from '../src/cad/extrusion.ts'
 import { createLoftMesh } from '../src/cad/loft.ts'
 import { createSweepMesh } from '../src/cad/sweep.ts'
+import { createSTEPText } from '../src/cad/stepExporter.ts'
 import { MATERIAL_PRESETS } from '../src/cad/materials.ts'
 
 function makePart(overrides = {}) {
@@ -335,4 +336,45 @@ test('sweep follows a 3D path with a closed faceted B-rep', () => {
     [vector(-1, -1, 0), vector(1, -1, 0), vector(1, 1, 0), vector(-1, 1, 0)],
     [vector(0, 0, 0), vector(0, 1, 1), vector(0, 1, 2)],
   ), /normal to the profile/)
+})
+
+test('STEP export references actual part meshes in a linked AP214 shape representation', () => {
+  const step = createSTEPText([makePart({ id: "plate-'A", name: "Plate's µ profile" }), makePart({ id: 'hidden', visible: false })], 'BestCad test', '2026-11-21T00:00:00Z')
+  assert.match(step, /^ISO-10303-21;\nHEADER;/)
+  assert.match(step, /FILE_SCHEMA\(\('AUTOMOTIVE_DESIGN'\)\)/)
+  assert.match(step, /FACETED_BREP\('Plate''s \\X2\\00B5\\X0\\ profile'/)
+  assert.match(step, /FACETED_BREP_SHAPE_REPRESENTATION\(/)
+  assert.match(step, /SHAPE_DEFINITION_REPRESENTATION\(/)
+  assert.match(step, /CLOSED_SHELL\(/)
+  assert.doesNotMatch(step, /hidden/)
+  const entityIds = [...step.matchAll(/^(#\d+) = /gm)].map((match) => match[1])
+  assert.equal(new Set(entityIds).size, entityIds.length)
+  const defined = new Set(entityIds)
+  for (const reference of step.matchAll(/#\d+/g)) assert.ok(defined.has(reference[0]), `undefined STEP reference ${reference[0]}`)
+  assert.throws(() => createSTEPText([], 'Empty'), /no visible solids/)
+})
+
+test('STEP faceted export accepts primitive, extrusion, loft, and sweep geometry', () => {
+  const profiles = makePart({ kind: 'extrusion', profile: [[-1, -1], [1, -1], [1, 1], [-1, 1]], profilePlane: 'front', size: [2, 2, 4] })
+  const loft = createLoftMesh(
+    [new THREE.Vector3(-1, -1, 0), new THREE.Vector3(1, -1, 0), new THREE.Vector3(1, 1, 0), new THREE.Vector3(-1, 1, 0)],
+    [new THREE.Vector3(-0.5, -0.5, 4), new THREE.Vector3(0.5, -0.5, 4), new THREE.Vector3(0.5, 0.5, 4), new THREE.Vector3(-0.5, 0.5, 4)],
+  )
+  const sweep = createSweepMesh(
+    [new THREE.Vector3(-1, -1, 0), new THREE.Vector3(1, -1, 0), new THREE.Vector3(1, 1, 0), new THREE.Vector3(-1, 1, 0)],
+    [new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, 4)],
+  )
+  const step = createSTEPText([
+    makePart(),
+    makePart({ id: 'cylinder', kind: 'cylinder', size: [2, 4, 2] }),
+    makePart({ id: 'sphere', kind: 'sphere', size: [2, 2, 2] }),
+    profiles,
+    makePart({ id: 'revolution', kind: 'revolution', profile: [[0, 0], [2, 0], [2, 4], [0, 4]], profilePlane: 'front', size: [4, 4, 4] }),
+    makePart({ id: 'fillet-box', edgeTreatment: { type: 'fillet', size: 0.4 } }),
+    makePart({ id: 'chamfer-box', edgeTreatment: { type: 'chamfer', size: 0.4 } }),
+    makePart({ id: 'treated-cylinder', kind: 'cylinder', size: [2, 4, 2], edgeTreatment: { type: 'fillet', size: 0.3 } }),
+    makePart({ id: 'loft', kind: 'custom', ...loft }),
+    makePart({ id: 'sweep', kind: 'custom', ...sweep }),
+  ])
+  assert.equal([...step.matchAll(/= FACETED_BREP\(/g)].length, 10)
 })
