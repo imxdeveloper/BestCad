@@ -514,7 +514,7 @@ function App() {
   const [sketchConstraints, setSketchConstraints] = useState<SketchConstraint[]>([])
   const [dimensionPointRefs, setDimensionPointRefs] = useState<{ entityId: string; pointIndex: number }[]>([])
   const [dimensionValue, setDimensionValue] = useState(0)
-  const [dimensionMode, setDimensionMode] = useState<'distance' | 'angle'>('distance')
+  const [dimensionMode, setDimensionMode] = useState<'distance' | 'angle' | 'width' | 'height'>('distance')
   const [constraintMessage, setConstraintMessage] = useState('')
   const [pendingSketchPoints, setPendingSketchPoints] = useState<[number, number][]>([])
   const [sketchCursorPoint, setSketchCursorPoint] = useState<[number, number] | null>(null)
@@ -1092,6 +1092,18 @@ function App() {
   }, [sketchEntities, sketchSnapEnabled])
 
   const addDimensionPoint = useCallback((point: [number, number]) => {
+    if (dimensionMode === 'width' || dimensionMode === 'height') {
+      const rectangle = sketchEntities
+        .filter((entity) => entity.type === 'rectangle' && !entity.isProjected)
+        .map((entity) => ({ entity, distance: sketchEntityDistance(entity, point) }))
+        .filter((item) => item.distance <= 0.35)
+        .sort((a, b) => a.distance - b.distance)[0]?.entity
+      if (!rectangle) { notify(`${dimensionMode === 'width' ? 'Width' : 'Height'} dimensions require clicking a rectangle edge`); return }
+      setDimensionPointRefs([{ entityId: rectangle.id, pointIndex: 0 }])
+      setDimensionValue(Number(Math.abs(rectangle.points[1][dimensionMode === 'width' ? 0 : 1] - rectangle.points[0][dimensionMode === 'width' ? 0 : 1]).toFixed(2)))
+      notify(`Enter the rectangle ${dimensionMode} and apply the dimension`)
+      return
+    }
     const nearestCurve = sketchEntities
       .filter((entity) => ['line', 'circle', 'arc'].includes(entity.type))
       .map((entity) => ({ entity, distance: sketchEntityDistance(entity, point) }))
@@ -1176,14 +1188,18 @@ function App() {
     const validValue = dimensionMode === 'angle'
       ? Number.isFinite(dimensionValue) && Math.abs(dimensionValue) <= 180
       : Number.isFinite(dimensionValue) && dimensionValue > 0
-    if (dimensionPointRefs.length !== 2 || !validValue) {
+    const requiredRefs = dimensionMode === 'width' || dimensionMode === 'height' ? 1 : 2
+    if (dimensionPointRefs.length !== requiredRefs || !validValue) {
       notify(dimensionMode === 'angle' ? 'Choose two lines and enter an angle from -180° to 180°' : 'Choose two sketch points and enter a positive dimension')
       return
     }
+    const entityIds = dimensionMode === 'width' || dimensionMode === 'height'
+      ? [dimensionPointRefs[0].entityId]
+      : dimensionPointRefs.map((ref) => ref.entityId)
     const constraint: SketchConstraint = {
       id: createFeatureId('constraint'),
       type: dimensionMode,
-      entityIds: dimensionPointRefs.map((ref) => ref.entityId),
+      entityIds,
       value: dimensionValue,
       ...(dimensionMode === 'distance' ? { pointIndices: dimensionPointRefs.map((ref) => ref.pointIndex) as [number, number] } : {}),
     }
@@ -2239,7 +2255,7 @@ function App() {
     })
     if (sketchStage === 'drawing' && sketchConstraints.length) {
       const frame = sketchPlaneFrame(sketchPlane, activeArbitraryPlane ?? undefined)
-      for (const constraint of sketchConstraints.filter((item) => (item.type === 'distance' || item.type === 'angle') && item.entityIds.length)) {
+      for (const constraint of sketchConstraints.filter((item) => (item.type === 'distance' || item.type === 'angle' || item.type === 'width' || item.type === 'height') && item.entityIds.length)) {
         const entityA = sketchEntities.find((entity) => entity.id === constraint.entityIds[0])
         const entityB = sketchEntities.find((entity) => entity.id === (constraint.entityIds[1] ?? constraint.entityIds[0]))
         if (!entityA || !entityB) continue
@@ -2260,13 +2276,19 @@ function App() {
           }
           continue
         }
-        const first = entityA.points[constraint.pointIndices?.[0] ?? 0]
-        const second = entityB.points[constraint.pointIndices?.[1] ?? 1]
+        let first = entityA.points[constraint.pointIndices?.[0] ?? 0]
+        let second = entityB.points[constraint.pointIndices?.[1] ?? 1]
+        if ((constraint.type === 'width' || constraint.type === 'height') && entityA.type === 'rectangle' && entityA.points.length >= 2) {
+          const [cornerA, cornerB] = entityA.points
+          if (constraint.type === 'width') second = [cornerB[0], cornerA[1]]
+          else second = [cornerA[0], cornerB[1]]
+        }
         if (!first || !second) continue
         const dx = second[0] - first[0], dy = second[1] - first[1]
         const length = Math.hypot(dx, dy)
         if (length < 1e-6) continue
-        const nx = -dy / length * 0.28, ny = dx / length * 0.28
+        const nx = constraint.type === 'width' ? 0 : constraint.type === 'height' ? -0.28 : -dy / length * 0.28
+        const ny = constraint.type === 'width' ? -0.28 : constraint.type === 'height' ? 0 : dx / length * 0.28
         const a = [first[0] + nx, first[1] + ny] as [number, number]
         const b = [second[0] + nx, second[1] + ny] as [number, number]
         const lineGeometry = new THREE.BufferGeometry()
@@ -2857,15 +2879,17 @@ function App() {
             <button className="subtle-button" onClick={() => setSketchSnapEnabled((enabled) => !enabled)} title="Snap to 0.5 mm grid and nearby sketch points">
               {sketchSnapEnabled ? 'Snap 0.5 mm: on' : 'Snap: off'}
             </button>
-            <span style={{ fontSize: 10, color: '#8b9b8b', padding: '0 6px' }}>{sketchType === 'select' ? 'Click to select/drag · Shift-click a second line for relations' : sketchType === 'line' ? 'Click two endpoints' : sketchType === 'polyline' ? 'Click points · click start to close · Enter to finish' : sketchType === 'spline' ? 'Click control points · Enter to finish (3+ points)' : sketchType === 'arc' ? 'Click center, start, end' : sketchType === 'circle' ? 'Click center, then radius' : sketchType === 'ellipse' ? 'Click center, major axis, minor axis' : sketchType === 'polygon' ? 'Click center, then radius' : sketchType === 'slot' ? 'Click end centers, then slot radius' : sketchType === 'trim' ? 'Click an open line segment to trim at intersection' : sketchType === 'offset' ? 'Select a curve, set distance, apply' : sketchType === 'dimension' ? 'Click a line/circle/arc for length or radius, or choose two points' : 'Click two corners'}{!['select', 'dimension', 'trim', 'offset'].includes(sketchType) ? ' · Shift bypasses snap' : ''}</span>
+            <span style={{ fontSize: 10, color: '#8b9b8b', padding: '0 6px' }}>{sketchType === 'select' ? 'Click to select/drag · Shift-click a second line for relations' : sketchType === 'line' ? 'Click two endpoints' : sketchType === 'polyline' ? 'Click points · click start to close · Enter to finish' : sketchType === 'spline' ? 'Click control points · Enter to finish (3+ points)' : sketchType === 'arc' ? 'Click center, start, end' : sketchType === 'circle' ? 'Click center, then radius' : sketchType === 'ellipse' ? 'Click center, major axis, minor axis' : sketchType === 'polygon' ? 'Click center, then radius' : sketchType === 'slot' ? 'Click end centers, then slot radius' : sketchType === 'trim' ? 'Click an open line segment to trim at intersection' : sketchType === 'offset' ? 'Select a curve, set distance, apply' : sketchType === 'dimension' ? 'Click rectangle edges for width/height, or click lines and circles for dimensions' : 'Click two corners'}{!['select', 'dimension', 'trim', 'offset'].includes(sketchType) ? ' · Shift bypasses snap' : ''}</span>
             {sketchType === 'select' && selectedSketchEntityId && <button className="subtle-button" onClick={deleteSelectedSketchEntity}><Trash2 size={13} /> Delete entity</button>}
             {sketchType === 'dimension' && <>
-                <select aria-label="Sketch dimension type" value={dimensionMode} onChange={(event) => { setDimensionMode(event.target.value as 'distance' | 'angle'); setDimensionPointRefs([]) }}>
+                <select aria-label="Sketch dimension type" value={dimensionMode} onChange={(event) => { setDimensionMode(event.target.value as typeof dimensionMode); setDimensionPointRefs([]) }}>
                   <option value="distance">Length / radius</option>
                   <option value="angle">Angle</option>
+                  <option value="width">Rectangle width</option>
+                  <option value="height">Rectangle height</option>
                 </select>
-                {dimensionPointRefs.length === 2 && <>
-                  <input aria-label={dimensionMode === 'angle' ? 'Angle dimension in degrees' : 'Dimension length in millimeters'} type="number" min={dimensionMode === 'angle' ? -180 : 0.01} max={dimensionMode === 'angle' ? 180 : undefined} step="0.1" value={dimensionValue} onChange={(event) => setDimensionValue(Number(event.target.value))} style={{ width: 76 }} />
+                {dimensionPointRefs.length === (dimensionMode === 'width' || dimensionMode === 'height' ? 1 : 2) && <>
+                  <input aria-label={dimensionMode === 'angle' ? 'Angle dimension in degrees' : `${dimensionMode === 'width' || dimensionMode === 'height' ? dimensionMode : 'Length'} dimension in millimeters`} type="number" min={dimensionMode === 'angle' ? -180 : 0.01} max={dimensionMode === 'angle' ? 180 : undefined} step="0.1" value={dimensionValue} onChange={(event) => setDimensionValue(Number(event.target.value))} style={{ width: 76 }} />
                   <button className="subtle-button" onClick={applySketchDimension}>{dimensionMode === 'angle' ? 'Apply °' : 'Apply mm'}</button>
                 </>}
             </>}

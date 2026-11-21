@@ -109,6 +109,14 @@ export function solveCoupledConstraints(
         const pB = readPt(entB, idxB)
         const currentDist = Math.hypot(pA[0] - pB[0], pA[1] - pB[1])
         residuals.push(currentDist - targetDist)
+      } else if (c.type === 'width' || c.type === 'height') {
+        const entity = cloned.find((item) => item.id === c.entityIds[0])
+        if (entity?.type === 'rectangle' && entity.points.length >= 2) {
+          const first = readPt(entity.id, 0)
+          const second = readPt(entity.id, 1)
+          const extent = c.type === 'width' ? Math.abs(second[0] - first[0]) : Math.abs(second[1] - first[1])
+          residuals.push(extent - (c.value ?? 10))
+        }
       } else if (c.type === 'parallel') {
         if (c.entityIds.length >= 2) {
           const p1 = readPt(c.entityIds[0], 0)

@@ -50,6 +50,19 @@ test('constraint solver enforces a target point distance', () => {
   assert.ok(Math.abs(Math.hypot(b[0] - a[0], b[1] - a[1]) - 10) < 0.01)
 })
 
+test('rectangle width and height dimensions solve independently', () => {
+  const rectangle = [{ id: 'rect', type: 'rectangle', points: [[0, 0], [4, 3]], closed: true }]
+  const result = solveCoupledConstraints(rectangle, [
+    { id: 'width', type: 'width', entityIds: ['rect'], value: 7 },
+    { id: 'height', type: 'height', entityIds: ['rect'], value: 2 },
+  ])
+  assert.ok(result.diagnostics.converged)
+  const [first, second] = result.solvedEntities[0].points
+  assert.ok(Math.abs(Math.abs(second[0] - first[0]) - 7) < 0.01)
+  assert.ok(Math.abs(Math.abs(second[1] - first[1]) - 2) < 0.01)
+  assert.deepEqual(rectangle[0].points, [[0, 0], [4, 3]])
+})
+
 test('constraint solver supports coincident points, fixed points, and target angles', () => {
   const coincident = solveCoupledConstraints([
     { id: 'a', type: 'line', points: [[0, 0], [2, 0]], closed: false },
