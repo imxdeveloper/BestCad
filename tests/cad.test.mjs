@@ -112,6 +112,19 @@ test('endpoint-on-line and concentric relations solve their intended geometry', 
   assert.ok(Math.hypot(outerCenter[0] - innerCenter[0], outerCenter[1] - innerCenter[1]) < 1e-4)
 })
 
+test('radius and diameter dimensions drive circle geometry', () => {
+  const circle = [{ id: 'circle', type: 'circle', points: [[2, 3], [5, 3]], closed: true, radius: 3 }]
+  const radiusResult = solveCoupledConstraints(circle, [{ id: 'radius', type: 'radius', entityIds: ['circle'], value: 7 }])
+  const [radiusCenter, radiusEdge] = radiusResult.solvedEntities[0].points
+  assert.ok(radiusResult.diagnostics.converged)
+  assert.ok(Math.abs(Math.hypot(radiusEdge[0] - radiusCenter[0], radiusEdge[1] - radiusCenter[1]) - 7) < 1e-3)
+
+  const diameterResult = solveCoupledConstraints(circle, [{ id: 'diameter', type: 'diameter', entityIds: ['circle'], value: 12 }])
+  const [diameterCenter, diameterEdge] = diameterResult.solvedEntities[0].points
+  assert.ok(diameterResult.diagnostics.converged)
+  assert.ok(Math.abs(Math.hypot(diameterEdge[0] - diameterCenter[0], diameterEdge[1] - diameterCenter[1]) - 6) < 1e-3)
+})
+
 test('polygon offset returns finite points and preserves vertex count', () => {
   const result = offsetPolygon([[0, 0], [10, 0], [10, 10], [0, 10]], 1)
   assert.equal(result.length, 4)

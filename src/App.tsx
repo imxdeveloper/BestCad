@@ -514,7 +514,7 @@ function App() {
   const [sketchConstraints, setSketchConstraints] = useState<SketchConstraint[]>([])
   const [dimensionPointRefs, setDimensionPointRefs] = useState<{ entityId: string; pointIndex: number }[]>([])
   const [dimensionValue, setDimensionValue] = useState(0)
-  const [dimensionMode, setDimensionMode] = useState<'distance' | 'angle' | 'width' | 'height'>('distance')
+  const [dimensionMode, setDimensionMode] = useState<'distance' | 'angle' | 'width' | 'height' | 'radius' | 'diameter'>('distance')
   const [constraintMessage, setConstraintMessage] = useState('')
   const [pendingSketchPoints, setPendingSketchPoints] = useState<[number, number][]>([])
   const [sketchCursorPoint, setSketchCursorPoint] = useState<[number, number] | null>(null)
@@ -1129,6 +1129,18 @@ function App() {
       notify('Enter a target angle and apply the dimension')
       return
     }
+    if (dimensionMode === 'radius' || dimensionMode === 'diameter') {
+      const entity = nearestCurve?.entity
+      if (!entity || !['circle', 'arc'].includes(entity.type) || entity.isProjected) {
+        notify('Radius and diameter dimensions require an editable circle or arc')
+        return
+      }
+      setDimensionPointRefs([{ entityId: entity.id, pointIndex: 0 }])
+      const radius = Math.hypot(entity.points[1][0] - entity.points[0][0], entity.points[1][1] - entity.points[0][1])
+      setDimensionValue(Number((dimensionMode === 'diameter' ? radius * 2 : radius).toFixed(2)))
+      notify(`Enter a target ${dimensionMode} and apply`)
+      return
+    }
     if (nearestCurve) {
       const { entity } = nearestCurve
       let firstIndex = 0, secondIndex = 1
@@ -1188,12 +1200,13 @@ function App() {
     const validValue = dimensionMode === 'angle'
       ? Number.isFinite(dimensionValue) && Math.abs(dimensionValue) <= 180
       : Number.isFinite(dimensionValue) && dimensionValue > 0
-    const requiredRefs = dimensionMode === 'width' || dimensionMode === 'height' ? 1 : 2
+    const singleReferenceDimension = ['width', 'height', 'radius', 'diameter'].includes(dimensionMode)
+    const requiredRefs = singleReferenceDimension ? 1 : 2
     if (dimensionPointRefs.length !== requiredRefs || !validValue) {
       notify(dimensionMode === 'angle' ? 'Choose two lines and enter an angle from -180° to 180°' : 'Choose two sketch points and enter a positive dimension')
       return
     }
-    const entityIds = dimensionMode === 'width' || dimensionMode === 'height'
+    const entityIds = singleReferenceDimension
       ? [dimensionPointRefs[0].entityId]
       : dimensionPointRefs.map((ref) => ref.entityId)
     const constraint: SketchConstraint = {
@@ -2894,12 +2907,14 @@ function App() {
             {sketchType === 'dimension' && <>
                 <select aria-label="Sketch dimension type" value={dimensionMode} onChange={(event) => { setDimensionMode(event.target.value as typeof dimensionMode); setDimensionPointRefs([]) }}>
                   <option value="distance">Length / radius</option>
+                  <option value="radius">Circle / arc radius</option>
+                  <option value="diameter">Circle diameter</option>
                   <option value="angle">Angle</option>
                   <option value="width">Rectangle width</option>
                   <option value="height">Rectangle height</option>
                 </select>
-                {dimensionPointRefs.length === (dimensionMode === 'width' || dimensionMode === 'height' ? 1 : 2) && <>
-                  <input aria-label={dimensionMode === 'angle' ? 'Angle dimension in degrees' : `${dimensionMode === 'width' || dimensionMode === 'height' ? dimensionMode : 'Length'} dimension in millimeters`} type="number" min={dimensionMode === 'angle' ? -180 : 0.01} max={dimensionMode === 'angle' ? 180 : undefined} step="0.1" value={dimensionValue} onChange={(event) => setDimensionValue(Number(event.target.value))} style={{ width: 76 }} />
+                {dimensionPointRefs.length === (['width', 'height', 'radius', 'diameter'].includes(dimensionMode) ? 1 : 2) && <>
+                  <input aria-label={dimensionMode === 'angle' ? 'Angle dimension in degrees' : `${dimensionMode} dimension in millimeters`} type="number" min={dimensionMode === 'angle' ? -180 : 0.01} max={dimensionMode === 'angle' ? 180 : undefined} step="0.1" value={dimensionValue} onChange={(event) => setDimensionValue(Number(event.target.value))} style={{ width: 76 }} />
                   <button className="subtle-button" onClick={applySketchDimension}>{dimensionMode === 'angle' ? 'Apply °' : 'Apply mm'}</button>
                 </>}
             </>}
