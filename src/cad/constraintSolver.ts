@@ -263,29 +263,70 @@ export function solveCoupledConstraints(
     entity.points[ptIdx][1] = Number(x[yIdx].toFixed(4))
   })
 
-  // Degrees of Freedom (DOF) diagnostic calculation
-  const effectiveConstraints = Math.min(numEquations, varCount)
-  const dof = Math.max(0, varCount - effectiveConstraints)
-
-  let status: SolverDiagnostics['status'] = 'under_defined'
-  if (currentCost > 0.1 && iter >= maxIterations) {
-    status = 'over_defined'
-  } else if (dof === 0) {
-    status = 'fully_defined'
-  } else {
-    status = 'under_defined'
+  // Estimate independent constraints from the final Jacobian. Counting equations
+  // alone overstates how many degrees of freedom have actually been removed when
+  // constraints are redundant or geometrically dependent.
+  const jacobian: number[][] = Array.from({ length: numEquations }, () => new Array(varCount).fill(0))
+  const h = 1e-6
+  for (let column = 0; column < varCount; column++) {
+    const original = x[column]
+    x[column] = original + h
+    const plus = evaluateResiduals(x)
+    x[column] = original - h
+    const minus = evaluateResiduals(x)
+    x[column] = original
+    for (let row = 0; row < numEquations; row++) jacobian[row][column] = (plus[row] - minus[row]) / (2 * h)
   }
+  const rank = matrixRank(jacobian)
+  const dof = Math.max(0, varCount - rank)
+  const residual = Math.sqrt(currentCost)
+
+  let status: SolverDiagnostics['status']
+  if (numEquations > rank) status = 'over_defined'
+  else if (residual > tolerance) status = 'inconsistent'
+  else status = dof === 0 ? 'fully_defined' : 'under_defined'
 
   return {
     solvedEntities: cloned,
     diagnostics: {
       status,
       dof,
-      residual: Math.sqrt(currentCost),
+      residual,
       iterations: iter,
-      converged: Math.sqrt(currentCost) <= tolerance,
+      converged: residual <= tolerance,
     },
   }
+}
+
+function matrixRank(matrix: number[][], tolerance = 1e-7): number {
+  if (!matrix.length || !matrix[0]?.length) return 0
+  const rows = matrix.map((row) => {
+    const rowScale = Math.max(...row.map((value) => Math.abs(value)))
+    return rowScale > 0 ? row.map((value) => value / rowScale) : [...row]
+  })
+  const rowCount = rows.length
+  const columnCount = rows[0].length
+  let rank = 0
+  const threshold = tolerance
+
+  for (let column = 0; column < columnCount && rank < rowCount; column++) {
+    let pivot = rank
+    for (let row = rank + 1; row < rowCount; row++) {
+      if (Math.abs(rows[row][column]) > Math.abs(rows[pivot][column])) pivot = row
+    }
+    if (Math.abs(rows[pivot][column]) <= threshold) continue
+    ;[rows[rank], rows[pivot]] = [rows[pivot], rows[rank]]
+    const pivotValue = rows[rank][column]
+    for (let nextColumn = column; nextColumn < columnCount; nextColumn++) rows[rank][nextColumn] /= pivotValue
+    for (let row = 0; row < rowCount; row++) {
+      if (row === rank) continue
+      const factor = rows[row][column]
+      if (Math.abs(factor) <= threshold) continue
+      for (let nextColumn = column; nextColumn < columnCount; nextColumn++) rows[row][nextColumn] -= factor * rows[rank][nextColumn]
+    }
+    rank++
+  }
+  return rank
 }
 
 /**

@@ -653,6 +653,9 @@ function App() {
 
   const selectedPart = parts.find((part) => part.id === selectedId) ?? null
   const selectedSketch = sketches.find((sketch) => sketch.id === selectedSketchId) ?? null
+  const sketchDiagnostics = useMemo(() => sketchStage === 'drawing' && sketchEntities.length
+    ? solveCoupledConstraints(sketchEntities, sketchConstraints).diagnostics
+    : null, [sketchConstraints, sketchEntities, sketchStage])
   const profileEntities = sketchStage === 'drawing' ? sketchEntities : selectedSketch?.entities ?? sketchEntities
   const activeProfilePlane = sketchStage === 'drawing' ? sketchPlane : selectedSketch?.plane ?? sketchPlane
 
@@ -1138,7 +1141,7 @@ function App() {
     }
     setSketchEntities(result.solvedEntities)
     setSketchConstraints(nextConstraints)
-    setConstraintMessage(`${nextConstraints.length} constraint(s) · ${result.diagnostics.status.replace('_', ' ')}`)
+    setConstraintMessage(`${result.diagnostics.status.replace('_', ' ')} · ${result.diagnostics.dof} DOF`)
     setDimensionPointRefs([])
     notify(`Dimension set to ${dimensionValue.toFixed(2)} mm`)
   }
@@ -1158,6 +1161,34 @@ function App() {
     } else {
       setConstructionMode((enabled) => !enabled)
     }
+  }
+
+  function toggleSelectedLineRelation(type: 'horizontal' | 'vertical') {
+    const entity = sketchEntities.find((item) => item.id === selectedSketchEntityId)
+    if (!entity || entity.type !== 'line' || entity.points.length !== 2) return
+    const existing = sketchConstraints.find((constraint) => constraint.type === type && constraint.entityIds[0] === entity.id)
+    const nextConstraints = existing
+      ? sketchConstraints.filter((constraint) => constraint.id !== existing.id)
+      : [...sketchConstraints, { id: createFeatureId('constraint'), type, entityIds: [entity.id] }]
+    const result = solveCoupledConstraints(sketchEntities, nextConstraints)
+    if (!result.diagnostics.converged) { notify(`Could not apply ${type} relation to this line`); return }
+    setSketchEntities(result.solvedEntities)
+    setSketchConstraints(nextConstraints)
+    setConstraintMessage(`${type} relation ${existing ? 'removed' : 'applied'}`)
+  }
+
+  function toggleSelectedFix() {
+    const entity = sketchEntities.find((item) => item.id === selectedSketchEntityId)
+    if (!entity) return
+    const existing = sketchConstraints.filter((constraint) => constraint.type === 'fixed' && constraint.entityIds[0] === entity.id)
+    const nextConstraints = existing.length
+      ? sketchConstraints.filter((constraint) => !(constraint.type === 'fixed' && constraint.entityIds[0] === entity.id))
+      : [...sketchConstraints, ...entity.points.map((point, pointIndex): SketchConstraint => ({ id: createFeatureId('constraint'), type: 'fixed', entityIds: [entity.id], pointIndices: [pointIndex, 0], value: point[0] }))]
+    const result = solveCoupledConstraints(sketchEntities, nextConstraints)
+    if (!result.diagnostics.converged) { notify('Could not fix this geometry while preserving its other constraints'); return }
+    setSketchEntities(result.solvedEntities)
+    setSketchConstraints(nextConstraints)
+    setConstraintMessage(existing.length ? 'Geometry unfixed' : 'Geometry fixed')
   }
 
   function applySketchOffset() {
@@ -2559,6 +2590,11 @@ function App() {
             <button className="subtle-button" onClick={toggleSelectedConstruction} title={selectedSketchEntityId ? 'Toggle construction on the selected entity' : 'Draw new entities as construction geometry'}>
               {selectedSketchEntityId ? (sketchEntities.find((entity) => entity.id === selectedSketchEntityId)?.isConstruction ? 'Make profile' : 'Make construction') : `Construction: ${constructionMode ? 'on' : 'off'}`}
             </button>
+            {selectedSketchEntityId && sketchEntities.find((entity) => entity.id === selectedSketchEntityId)?.type === 'line' && <>
+              <button className="subtle-button" onClick={() => toggleSelectedLineRelation('horizontal')}>Horizontal</button>
+              <button className="subtle-button" onClick={() => toggleSelectedLineRelation('vertical')}>Vertical</button>
+            </>}
+            {selectedSketchEntityId && <button className="subtle-button" onClick={toggleSelectedFix}>{sketchConstraints.some((constraint) => constraint.type === 'fixed' && constraint.entityIds[0] === selectedSketchEntityId) ? 'Unfix' : 'Fix'}</button>}
             <button className="subtle-button" onClick={() => setSketchSnapEnabled((enabled) => !enabled)} title="Snap to 0.5 mm grid and nearby sketch points">
               {sketchSnapEnabled ? 'Snap 0.5 mm: on' : 'Snap: off'}
             </button>
@@ -2570,6 +2606,7 @@ function App() {
                 <button className="subtle-button" onClick={applySketchDimension}>Apply mm</button>
               </>
             )}
+            {sketchDiagnostics && <span title="Estimated sketch constraint status" style={{ fontSize: 10, color: sketchDiagnostics.status === 'fully_defined' ? '#83e0a2' : sketchDiagnostics.status === 'over_defined' || sketchDiagnostics.status === 'inconsistent' ? '#ff9b86' : '#9ab99a' }}>{sketchDiagnostics.status.replace('_', ' ')} · {sketchDiagnostics.dof} DOF</span>}
             {constraintMessage && <span style={{ fontSize: 10, color: '#9ab99a' }}>{constraintMessage}</span>}
             <button className="subtle-button" onClick={cancelSketch}><X size={13} /> Cancel</button>
             <button className="primary-button" onClick={finishSketch}><Save size={13} /> Finish Sketch</button>
