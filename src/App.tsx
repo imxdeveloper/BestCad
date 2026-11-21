@@ -2274,7 +2274,7 @@ function App() {
     })
     if (sketchStage === 'drawing' && sketchConstraints.length) {
       const frame = sketchPlaneFrame(sketchPlane, activeArbitraryPlane ?? undefined)
-      for (const constraint of sketchConstraints.filter((item) => (item.type === 'distance' || item.type === 'angle' || item.type === 'width' || item.type === 'height') && item.entityIds.length)) {
+      for (const constraint of sketchConstraints.filter((item) => (item.type === 'distance' || item.type === 'angle' || item.type === 'width' || item.type === 'height' || item.type === 'radius' || item.type === 'diameter') && item.entityIds.length)) {
         const entityA = sketchEntities.find((entity) => entity.id === constraint.entityIds[0])
         const entityB = sketchEntities.find((entity) => entity.id === (constraint.entityIds[1] ?? constraint.entityIds[0]))
         if (!entityA || !entityB) continue
@@ -2328,7 +2328,8 @@ function App() {
           context.fillStyle = 'rgba(14, 26, 36, 0.92)'
           context.beginPath(); context.roundRect(4, 4, 248, 56, 12); context.fill()
           context.fillStyle = '#a9eaff'; context.font = 'bold 30px Segoe UI, sans-serif'; context.textAlign = 'center'; context.textBaseline = 'middle'
-          context.fillText(`${(constraint.value ?? length).toFixed(2)} mm`, 128, 32)
+          const dimensionText = constraint.type === 'radius' ? `R${(constraint.value ?? length).toFixed(2)}` : constraint.type === 'diameter' ? `Ø${(constraint.value ?? length * 2).toFixed(2)}` : `${(constraint.value ?? length).toFixed(2)} mm`
+          context.fillText(dimensionText, 128, 32)
           const texture = new THREE.CanvasTexture(canvas)
           const label = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false }))
           const midpoint = frame.origin.clone().addScaledVector(frame.uAxis, (a[0] + b[0]) / 2).addScaledVector(frame.vAxis, (a[1] + b[1]) / 2).addScaledVector(frame.normal, 0.055)
