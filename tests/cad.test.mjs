@@ -9,9 +9,10 @@ import { solveStaticStressFEA } from '../src/cad/simulation.ts'
 import { computeGeometryMetrics, calculateDistance } from '../src/cad/inspection.ts'
 import { generateEngineeringDrawingSVG } from '../src/cad/drawing.ts'
 import { executeCADScript, SCRIPT_TEMPLATES } from '../src/cad/automate.ts'
-import { buildBoxBRep, buildExtrusionBRep, getPartBRep } from '../src/cad/brep.ts'
+import { buildBoxBRep, buildExtrusionBRep, buildMeshBRep, getPartBRep } from '../src/cad/brep.ts'
 import { getSketchProjectionFrame, projectPartEdgeToSketch, syncProjectedSketches } from '../src/cad/sketchProjection.ts'
 import { getExtrusionOrigin } from '../src/cad/extrusion.ts'
+import { createLoftMesh } from '../src/cad/loft.ts'
 import { MATERIAL_PRESETS } from '../src/cad/materials.ts'
 
 function makePart(overrides = {}) {
@@ -293,4 +294,26 @@ test('symmetric extrusion centers mesh and B-rep depth on the sketch plane', () 
   assert.ok(top.every((vertex) => vertex.point[2] === 11))
   const oneSided = buildExtrusionBRep({ ...part, extrudeMode: 'new' })
   assert.ok(oneSided.vertices.filter((vertex) => vertex.id.includes('_bot_')).every((vertex) => vertex.point[2] === 7))
+})
+
+test('loft creates a closed faceted B-rep between unequal parallel profiles', () => {
+  const vector = (x, y, z) => new THREE.Vector3(x, y, z)
+  const loft = createLoftMesh(
+    [vector(-2, -2, 0), vector(2, -2, 0), vector(2, 2, 0), vector(-2, 2, 0)],
+    [vector(-1, -1, 6), vector(1, -1, 6), vector(1, 1, 6), vector(-1, 1, 6)],
+  )
+  assert.ok(loft.meshData.indices.length > 0)
+  assert.deepEqual(loft.size, [4, 4, 6])
+  const part = makePart({ kind: 'custom', ...loft })
+  const brep = buildMeshBRep(part)
+  assert.equal(brep.vertices.length, loft.meshData.positions.length / 3)
+  assert.ok(brep.faces.length > 0)
+  const edgeUse = new Map()
+  for (const loop of brep.loops) for (const edgeId of loop.edgeIds) edgeUse.set(edgeId, (edgeUse.get(edgeId) ?? 0) + 1)
+  assert.ok([...edgeUse.values()].every((count) => count === 2), 'every mesh edge belongs to exactly two faces')
+  assert.throws(() => buildMeshBRep(makePart({ kind: 'custom', meshData: { positions: [0, 0, 0, 1, 0, 0, 0, 1, 0], indices: [0, 1, 2] } })), /closed two-manifold/)
+  assert.throws(() => createLoftMesh(
+    [vector(0, 0, 0), vector(2, 0, 0), vector(2, 2, 0), vector(0, 2, 0)],
+    [vector(0, 0, 0), vector(2, 0, 0), vector(2, 2, 0), vector(0, 2, 0)],
+  ), /separate parallel planes/)
 })

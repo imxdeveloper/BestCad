@@ -375,11 +375,83 @@ export function buildExtrusionBRep(part: Part): BRepBody {
   return { id: `brep_${part.id}`, partId: part.id, vertices, edges, loops, faces }
 }
 
+/** Builds a faceted B-rep for imported or generated triangle meshes. */
+export function buildMeshBRep(part: Part): BRepBody {
+  if (!part.meshData || part.meshData.positions.length % 3 !== 0 || part.meshData.indices.length < 3 || part.meshData.indices.length % 3 !== 0) {
+    throw new RangeError('A mesh B-rep requires indexed triangles')
+  }
+  const vertices: BRepVertex[] = []
+  const vertexIds = new Map<string, string>()
+  const edges: BRepEdge[] = []
+  const edgeIds = new Map<string, string>()
+  const edgeUse = new Map<string, number>()
+  const loops: BRepLoop[] = []
+  const faces: BRepFace[] = []
+  const pointFor = (index: number) => {
+    const offset = index * 3
+    const point: [number, number, number] = [
+      part.meshData!.positions[offset] + part.position[0],
+      part.meshData!.positions[offset + 1] + part.position[1],
+      part.meshData!.positions[offset + 2] + part.position[2],
+    ]
+    if (!point.every(Number.isFinite)) throw new RangeError('Mesh contains a non-finite vertex')
+    const key = point.map((value) => value.toFixed(6)).join(',')
+    if (!vertexIds.has(key)) {
+      const id = `v_${part.id}_${vertices.length}`
+      vertexIds.set(key, id)
+      vertices.push({ id, point })
+    }
+    return { id: vertexIds.get(key)!, point }
+  }
+  for (let offset = 0; offset < part.meshData.indices.length; offset += 3) {
+    const triangle = part.meshData.indices.slice(offset, offset + 3)
+    if (triangle.some((index) => !Number.isInteger(index) || index < 0 || index * 3 + 2 >= part.meshData!.positions.length)) {
+      throw new RangeError('Mesh contains an invalid triangle index')
+    }
+    const points = triangle.map(pointFor)
+    const normal = new THREE.Vector3().crossVectors(
+      new THREE.Vector3(...points[1].point).sub(new THREE.Vector3(...points[0].point)),
+      new THREE.Vector3(...points[2].point).sub(new THREE.Vector3(...points[0].point)),
+    )
+    const area = normal.length() / 2
+    if (area < 1e-10) continue
+    normal.normalize()
+    const faceEdgeIds: string[] = []
+    for (let edgeIndex = 0; edgeIndex < 3; edgeIndex += 1) {
+      const start = points[edgeIndex], end = points[(edgeIndex + 1) % 3]
+      const key = [start.id, end.id].sort().join('|')
+      if (!edgeIds.has(key)) {
+        const id = `e_${part.id}_${edges.length}`
+        edgeIds.set(key, id)
+        edges.push({ id, startVertexId: start.id, endVertexId: end.id, curveType: 'line' })
+      }
+      faceEdgeIds.push(edgeIds.get(key)!)
+      edgeUse.set(key, (edgeUse.get(key) ?? 0) + 1)
+    }
+    const faceIndex = faces.length
+    const loopId = `loop_${part.id}_${faceIndex}`
+    loops.push({ id: loopId, edgeIds: faceEdgeIds, isOuter: true })
+    const uAxis = new THREE.Vector3(...points[1].point).sub(new THREE.Vector3(...points[0].point)).normalize()
+    const vAxis = new THREE.Vector3().crossVectors(normal, uAxis).normalize()
+    faces.push({
+      id: `face_${part.id}_${faceIndex}`, surfaceType: 'plane', origin: points[0].point,
+      normal: normal.toArray() as [number, number, number], uAxis: uAxis.toArray() as [number, number, number],
+      vAxis: vAxis.toArray() as [number, number, number], outerLoopId: loopId, innerLoopIds: [], area,
+      boundaryPoints: points.map((point) => point.point),
+    })
+  }
+  if (faces.length < 4 || [...edgeUse.values()].some((uses) => uses !== 2)) {
+    throw new RangeError('Mesh does not form a closed two-manifold solid')
+  }
+  return { id: `brep_${part.id}`, partId: part.id, vertices, edges, loops, faces }
+}
+
 /**
  * Computes or retrieves the B-Rep body for any Part
  */
 export function getPartBRep(part: Part): BRepBody {
   if (part.brep) return part.brep
+  if (part.meshData) return buildMeshBRep(part)
   if (part.kind === 'cylinder') return buildCylinderBRep(part)
   if (part.kind === 'extrusion') return buildExtrusionBRep(part)
   return buildBoxBRep(part)

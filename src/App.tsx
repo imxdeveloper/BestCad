@@ -80,11 +80,12 @@ import { generateCAMToolpaths } from './cad/cam'
 import { generateEngineeringDrawingSVG } from './cad/drawing'
 import { exportToSTEP } from './cad/stepExporter'
 import { SCRIPT_TEMPLATES, executeCADScript } from './cad/automate'
-import { getPartBRep, raycastPlanarFace } from './cad/brep'
+import { buildMeshBRep, getPartBRep, raycastPlanarFace } from './cad/brep'
 import { getSketchProjectionFrame, projectPartEdgeToSketch, syncProjectedSketches } from './cad/sketchProjection'
 import { solveCoupledConstraints } from './cad/constraintSolver'
 import { offsetOpenPath, offsetPolygon } from './cad/sketcher'
 import { getExtrusionOrigin } from './cad/extrusion'
+import { createLoftMesh } from './cad/loft'
 
 const SKETCH_PLANE_Y = 0.6
 
@@ -211,6 +212,31 @@ function closedProfilePoints(entity: SketchEntity): [number, number][] {
     points.pop()
   }
   return points
+}
+
+function buildLoftPart(firstSketch: SketchFeature, secondSketch: SketchFeature, entityIds: [string, string], existing?: Part): Part {
+  const sections = [firstSketch, secondSketch].map((sketch, index) => {
+    const entity = sketch.entities.find((item) => item.id === entityIds[index])
+    if (!entity || !entity.closed || entity.isConstruction || entity.isProjected || entity.type === 'arc') {
+      throw new RangeError(`Sketch ${sketch.name} needs its closed loft profile`)
+    }
+    const profile = closedProfilePoints(entity)
+    if (profile.length < 3 || polygonArea(profile) <= 1e-9 || polygonHasSelfIntersection(profile)) {
+      throw new RangeError(`Sketch ${sketch.name} has an invalid loft profile`)
+    }
+    const frame = sketchPlaneFrame(sketch.plane, sketch.arbitraryPlane)
+    return profile.map(([u, v]) => frame.origin.clone().addScaledVector(frame.uAxis, u).addScaledVector(frame.vAxis, v))
+  })
+  const loft = createLoftMesh(sections[0], sections[1])
+  const part: Part = {
+    id: existing?.id ?? createFeatureId('loft'), name: existing?.name ?? 'Loft',
+    kind: 'custom', size: loft.size, position: loft.position, meshData: loft.meshData,
+    color: existing?.color ?? '#78a9dc', materialId: existing?.materialId ?? 'aluminum', visible: existing?.visible ?? true,
+    loftSketchIds: [firstSketch.id, secondSketch.id], loftSketchEntityIds: entityIds,
+    operation: `Loft · ${firstSketch.name} to ${secondSketch.name}`,
+  }
+  part.brep = buildMeshBRep(part)
+  return part
 }
 
 function polygonArea(points: [number, number][]): number {
@@ -566,6 +592,7 @@ function App() {
 
   const [selectedId, setSelectedId] = useState<string | null>('jaw')
   const [selectedSketchId, setSelectedSketchId] = useState<string | null>(null)
+  const [loftTargetSketchId, setLoftTargetSketchId] = useState<string>('')
   const [past, setPast] = useState<ModelSnapshot[]>([])
   const [future, setFuture] = useState<ModelSnapshot[]>([])
   const [sketchEntities, setSketchEntities] = useState<SketchEntity[]>([])
@@ -913,9 +940,9 @@ function App() {
   }, [activeArbitraryPlane, activeProfilePlane, commitParts, extrudeDistance, extrudeMode, notify, parts, profileEntities, selectedSketch, selectedSketchId, setShowExtrudeDialog, sketchStage, sketchType])
 
   function deleteSelectedSketch(sketchId: string) {
-    const dependentParts = parts.filter((part) => part.sketchId === sketchId)
+    const dependentParts = parts.filter((part) => part.sketchId === sketchId || part.loftSketchIds?.includes(sketchId))
     commitModel({
-      parts: dependentParts.length ? parts.filter((part) => part.sketchId !== sketchId) : parts,
+      parts: dependentParts.length ? parts.filter((part) => part.sketchId !== sketchId && !part.loftSketchIds?.includes(sketchId)) : parts,
       sketches: sketches.filter((sketch) => sketch.id !== sketchId),
       joints,
     })
@@ -1012,6 +1039,20 @@ function App() {
           position: part.kind === 'revolution' ? [...part.position] : feature.arbitraryPlane ? [...feature.arbitraryPlane.origin] : feature.plane === 'top' ? [0, SKETCH_PLANE_Y, 0] : [0, 0, 0],
           size,
         })
+      }
+      for (const part of parts.filter((item) => item.loftSketchIds?.includes(previous.id))) {
+        const firstSketch = nextSketches.find((sketch) => sketch.id === part.loftSketchIds?.[0])
+        const secondSketch = nextSketches.find((sketch) => sketch.id === part.loftSketchIds?.[1])
+        if (!firstSketch || !secondSketch || !part.loftSketchEntityIds) {
+          notify(`Cannot finish: ${part.name} is missing a loft section`)
+          return
+        }
+        try {
+          regenerated.set(part.id, buildLoftPart(firstSketch, secondSketch, part.loftSketchEntityIds, part))
+        } catch (error) {
+          notify(`Cannot finish: ${error instanceof Error ? error.message : `${part.name} could not regenerate`}`)
+          return
+        }
       }
       if (regenerated.size) nextParts = parts.map((part) => regenerated.get(part.id) ?? part)
     }
@@ -1544,6 +1585,20 @@ function App() {
   }
 
   function openSolidCommand(command: SolidCommand) {
+    if (command === 'loft') {
+      if (!selectedSketch) {
+        notify('Select a finished sketch to use as the first loft section')
+        return
+      }
+      const target = sketches.find((sketch) => sketch.id !== selectedSketch.id && sketch.visible)
+      if (!target) {
+        notify('Create a second visible sketch for the loft end section')
+        return
+      }
+      setLoftTargetSketchId(target.id)
+      setSolidCommand('loft')
+      return
+    }
     if (command === 'revolve') {
       if (!selectedSketch) {
         notify('Finish and select a sketch before creating a revolve')
@@ -1603,6 +1658,31 @@ function App() {
 
   async function runSolidCommand() {
     if (!solidCommand) return
+    if (solidCommand === 'loft') {
+      const firstSketch = selectedSketch
+      const secondSketch = sketches.find((sketch) => sketch.id === loftTargetSketchId)
+      if (!firstSketch || !secondSketch || firstSketch.id === secondSketch.id) {
+        notify('Choose two different finished sketches for the loft sections')
+        return
+      }
+      const firstEntity = firstSketch.entities.find((entity) => entity.closed && !entity.isConstruction && !entity.isProjected && entity.type !== 'arc')
+      const secondEntity = secondSketch.entities.find((entity) => entity.closed && !entity.isConstruction && !entity.isProjected && entity.type !== 'arc')
+      if (!firstEntity || !secondEntity) {
+        notify('Each loft sketch needs a closed, non-construction profile')
+        return
+      }
+      try {
+        const part = buildLoftPart(firstSketch, secondSketch, [firstEntity.id, secondEntity.id])
+        part.name = `Loft ${parts.filter((item) => item.operation?.startsWith('Loft')).length + 1}`
+        commitParts([...parts, part])
+        setSelectedId(part.id)
+        setSolidCommand(null)
+        notify('Loft solid created with faceted B-rep geometry')
+      } catch (error) {
+        notify(error instanceof Error ? error.message : 'Loft generation failed; check the section profiles')
+      }
+      return
+    }
     if (solidCommand === 'revolve') {
       if (!selectedSketch || selectedSketch.plane !== 'front' || selectedSketch.arbitraryPlane) {
         notify('Select a sketch on the Front (XY) plane before revolving')
@@ -2683,6 +2763,10 @@ function App() {
               <Rotate3D size={16} />
               <span>Revolve</span>
             </button>
+            <button onClick={() => openSolidCommand('loft')} disabled={!selectedSketch} title="Create a solid between two finished sketch profiles">
+              <Layers3 size={16} />
+              <span>Loft</span>
+            </button>
             <span className="solid-ribbon-divider" />
             <button onClick={() => openSolidCommand('fillet')}>
               <Circle size={16} />
@@ -3225,6 +3309,17 @@ function App() {
                     <label>
                       Angle (degrees):
                       <input type="number" min="1" max="360" step="1" value={operationValue} onChange={(e) => setOperationValue(Number(e.target.value))} />
+                    </label>
+                  </>
+                )}
+                {solidCommand === 'loft' && (
+                  <>
+                    <p style={{ fontSize: 11, color: '#9aa6b2', margin: '0 0 8px' }}>Connects the selected sketch profile to a parallel end section. Each sketch must contain a closed profile.</p>
+                    <label>
+                      End section sketch:
+                      <select aria-label="Loft end section sketch" value={loftTargetSketchId} onChange={(event) => setLoftTargetSketchId(event.target.value)}>
+                        {sketches.filter((sketch) => sketch.id !== selectedSketchId && sketch.visible).map((sketch) => <option key={sketch.id} value={sketch.id}>{sketch.name}</option>)}
+                      </select>
                     </label>
                   </>
                 )}

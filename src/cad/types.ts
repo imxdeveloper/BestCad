@@ -195,6 +195,8 @@ export type Part = {
   extrudeMode?: 'new' | 'symmetric' | 'cut'
   sketchId?: string
   sketchEntityId?: string
+  loftSketchIds?: [string, string]
+  loftSketchEntityIds?: [string, string]
   edgeTreatment?: EdgeTreatment
   meshData?: MeshData
   brep?: BRepBody
