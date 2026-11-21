@@ -5,7 +5,7 @@ export type PartKind = Primitive | 'extrusion' | 'revolution' | 'custom'
 export type StandardPlaneId = 'top' | 'front' | 'right'
 export type SketchPlane = StandardPlaneId | string
 export type SketchProfile = 'rectangle' | 'circle' | 'polygon'
-export type SketchTool = 'select' | 'line' | 'rectangle' | 'circle' | 'arc' | 'trim' | 'offset' | 'dimension'
+export type SketchTool = 'select' | 'line' | 'polyline' | 'rectangle' | 'circle' | 'arc' | 'trim' | 'offset' | 'dimension'
 
 export type ArbitraryPlane = {
   id: string

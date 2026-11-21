@@ -111,8 +111,9 @@ function arcPoints(center: [number, number], start: [number, number], end: [numb
   const radius = Math.hypot(start[0] - center[0], start[1] - center[1])
   let startAngle = Math.atan2(start[1] - center[1], start[0] - center[0])
   let endAngle = Math.atan2(end[1] - center[1], end[0] - center[0])
-  while (endAngle <= startAngle) endAngle += Math.PI * 2
-  if (endAngle - startAngle > Math.PI * 2 - 0.01) endAngle = startAngle + 0.01
+  // A three-click arc should follow the shorter sweep between its start and end.
+  while (endAngle - startAngle > Math.PI) endAngle -= Math.PI * 2
+  while (endAngle - startAngle < -Math.PI) endAngle += Math.PI * 2
   return Array.from({ length: 33 }, (_, index): [number, number] => {
     const angle = startAngle + ((endAngle - startAngle) * index) / 32
     return [center[0] + Math.cos(angle) * radius, center[1] + Math.sin(angle) * radius]
@@ -511,6 +512,9 @@ function App() {
   const [dimensionValue, setDimensionValue] = useState(0)
   const [constraintMessage, setConstraintMessage] = useState('')
   const [pendingSketchPoints, setPendingSketchPoints] = useState<[number, number][]>([])
+  const [sketchCursorPoint, setSketchCursorPoint] = useState<[number, number] | null>(null)
+  const [sketchSnapEnabled, setSketchSnapEnabled] = useState(true)
+  const [constructionMode, setConstructionMode] = useState(false)
   const [sketchType, setSketchType] = useState<SketchTool>('rectangle')
   const [sketchPlane, setSketchPlane] = useState<SketchPlane>('top')
   const [sketchStage, setSketchStage] = useState<SketchStage>('idle')
@@ -719,7 +723,16 @@ function App() {
       const editingText = target instanceof HTMLElement && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))
       if (editingText) return
       const command = event.ctrlKey || event.metaKey
-      if (command && event.key.toLowerCase() === 'z') {
+      if (sketchStage === 'drawing' && event.key === 'Escape' && pendingSketchPoints.length) {
+        event.preventDefault()
+        setPendingSketchPoints([])
+      } else if (sketchStage === 'drawing' && event.key === 'Enter' && sketchType === 'polyline') {
+        event.preventDefault()
+        if (pendingSketchPoints.length >= 2) {
+          setSketchEntities((items) => [...items, { id: createFeatureId('entity'), type: 'line', points: pendingSketchPoints, closed: false, isConstruction: constructionMode }])
+          setPendingSketchPoints([])
+        }
+      } else if (command && event.key.toLowerCase() === 'z') {
         event.preventDefault()
         if (event.shiftKey) redo()
         else undo()
@@ -743,7 +756,7 @@ function App() {
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [exportDocumentFile, redo, saveDocument, selectedSketchEntityId, setSketchConstraints, setSketchEntities, setSelectedSketchEntityId, sketchStage, undo])
+  }, [constructionMode, exportDocumentFile, pendingSketchPoints, redo, saveDocument, selectedSketchEntityId, setSketchConstraints, setSketchEntities, setSelectedSketchEntityId, sketchStage, sketchType, undo])
 
   const deleteSelected = useCallback(() => {
     if (!selectedId) return
@@ -757,7 +770,7 @@ function App() {
       notify(`Choose a valid ${sketchType} profile and a positive extrusion distance`)
       return
     }
-    const closedProfiles = profileEntities.filter((entity) => entity.closed && entity.type !== 'arc')
+    const closedProfiles = profileEntities.filter((entity) => entity.closed && entity.type !== 'arc' && !entity.isConstruction)
     if (!closedProfiles.length) {
       notify('Add at least one closed profile to the sketch before extruding')
       return
@@ -866,7 +879,7 @@ function App() {
       const regenerated = new Map<string, Part>()
       for (const part of parts.filter((item) => item.sketchId === previous.id && item.sketchEntityId)) {
         const source = feature.entities.find((entity) => entity.id === part.sketchEntityId)
-        if (!source || !source.closed || source.type === 'arc') {
+        if (!source || !source.closed || source.type === 'arc' || source.isConstruction) {
           notify(`Cannot finish: ${part.name} needs its closed source profile`)
           return
         }
@@ -961,20 +974,46 @@ function App() {
   function chooseSketchTool(tool: SketchTool) {
     setSketchType(tool)
     setPendingSketchPoints([])
+    setSketchCursorPoint(null)
     setDimensionPointRefs([])
   }
 
   const addSketchPoint = useCallback((point: [number, number]) => {
     if (sketchType === 'select' || sketchType === 'trim' || sketchType === 'offset' || sketchType === 'dimension') return
+    if (sketchType === 'polyline') {
+      if (pendingSketchPoints.length >= 3 && Math.hypot(pendingSketchPoints[0][0] - point[0], pendingSketchPoints[0][1] - point[1]) <= 0.35) {
+        setSketchEntities((items) => [...items, { id: createFeatureId('entity'), type: 'line', points: pendingSketchPoints, closed: true, isConstruction: constructionMode }])
+        setPendingSketchPoints([])
+        return
+      }
+      setPendingSketchPoints((points) => [...points, point])
+      return
+    }
     const required = sketchType === 'arc' ? 3 : 2
     const next = [...pendingSketchPoints, point]
     if (next.length < required) { setPendingSketchPoints(next); return }
     const type = sketchType === 'line' ? 'line' : sketchType === 'circle' ? 'circle' : sketchType === 'arc' ? 'arc' : 'rectangle'
     const closed = type === 'circle' || type === 'rectangle'
-    const entity: SketchEntity = { id: createFeatureId('entity'), type, points: next, closed }
+    const entity: SketchEntity = { id: createFeatureId('entity'), type, points: next, closed, isConstruction: constructionMode }
     setSketchEntities((items) => [...items, entity])
     setPendingSketchPoints([])
-  }, [pendingSketchPoints, sketchType])
+  }, [constructionMode, pendingSketchPoints, sketchType])
+
+  const snapSketchPoint = useCallback((point: [number, number], bypass: boolean): [number, number] => {
+    if (bypass || !sketchSnapEnabled) return point
+    let snapped: [number, number] = [Math.round(point[0] * 2) / 2, Math.round(point[1] * 2) / 2]
+    let nearestDistance = 0.24
+    for (const entity of sketchEntities) {
+      const candidates = entity.type === 'rectangle' && entity.points.length >= 2
+        ? [entity.points[0], entity.points[1], [entity.points[0][0], entity.points[1][1]] as [number, number], [entity.points[1][0], entity.points[0][1]] as [number, number]]
+        : entity.points
+      for (const candidate of candidates) {
+        const distance = Math.hypot(candidate[0] - point[0], candidate[1] - point[1])
+        if (distance < nearestDistance) { snapped = candidate; nearestDistance = distance }
+      }
+    }
+    return snapped
+  }, [sketchEntities, sketchSnapEnabled])
 
   const addDimensionPoint = useCallback((point: [number, number]) => {
     let nearest: { entityId: string; pointIndex: number; distance: number; coordinate: [number, number] } | null = null
@@ -1042,6 +1081,14 @@ function App() {
     setSketchConstraints((constraints) => constraints.filter((constraint) => !constraint.entityIds.includes(deletedId)))
     setSelectedSketchEntityId(null)
     setConstraintMessage('Selected sketch entity deleted')
+  }
+
+  function toggleSelectedConstruction() {
+    if (selectedSketchEntityId) {
+      setSketchEntities((entities) => entities.map((entity) => entity.id === selectedSketchEntityId ? { ...entity, isConstruction: !entity.isConstruction } : entity))
+    } else {
+      setConstructionMode((enabled) => !enabled)
+    }
   }
 
   function addPart(kind: Primitive, options?: { name: string; size: [number, number, number]; position: [number, number, number]; color: string }) {
@@ -1223,7 +1270,7 @@ function App() {
         notify('Revolve angle must be greater than 0 and no more than 360 degrees')
         return
       }
-      const profiles = selectedSketch.entities.filter((entity) => entity.closed && entity.type !== 'arc')
+      const profiles = selectedSketch.entities.filter((entity) => entity.closed && entity.type !== 'arc' && !entity.isConstruction)
       if (!profiles.length) {
         notify('The selected sketch needs a closed profile')
         return
@@ -1727,6 +1774,44 @@ function App() {
       grid.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), frame.normal)
       grid.position.copy(frame.origin).addScaledVector(frame.normal, -0.015)
       viewer.sketch.add(grid)
+      if (sketchCursorPoint && sketchType !== 'select' && sketchType !== 'dimension') {
+        const previewPoints = [...pendingSketchPoints, sketchCursorPoint]
+        let preview: [number, number][] = []
+        if (sketchType === 'line' && previewPoints.length >= 2) preview = previewPoints.slice(-2)
+        else if (sketchType === 'polyline' && previewPoints.length >= 2) {
+          preview = [...previewPoints]
+          if (preview.length >= 4 && Math.hypot(preview[0][0] - sketchCursorPoint[0], preview[0][1] - sketchCursorPoint[1]) <= 0.35) preview.push(preview[0])
+        }
+        else if (sketchType === 'rectangle' && previewPoints.length >= 2) {
+          const [a, b] = previewPoints.slice(-2)
+          preview = [a, [b[0], a[1]], b, [a[0], b[1]], a]
+        } else if (sketchType === 'circle' && previewPoints.length >= 2) {
+          const [center, edge] = previewPoints.slice(-2)
+          const radius = Math.hypot(edge[0] - center[0], edge[1] - center[1])
+          preview = Array.from({ length: 49 }, (_, index): [number, number] => [center[0] + Math.cos(index * Math.PI / 24) * radius, center[1] + Math.sin(index * Math.PI / 24) * radius])
+        } else if (sketchType === 'arc' && previewPoints.length >= 3) preview = arcPoints(previewPoints[0], previewPoints[1], previewPoints[2])
+        else if (previewPoints.length) preview = [previewPoints[previewPoints.length - 1], sketchCursorPoint]
+        if (preview.length >= 2) {
+          const positions: number[] = []
+          preview.forEach(([u, v]) => {
+            const world = frame.origin.clone().addScaledVector(frame.uAxis, u).addScaledVector(frame.vAxis, v).addScaledVector(frame.normal, 0.025)
+            positions.push(world.x, world.y, world.z)
+          })
+          const geometry = new THREE.BufferGeometry()
+          geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+          const previewMaterial = constructionMode
+            ? new THREE.LineDashedMaterial({ color: '#ffbd63', dashSize: 0.18, gapSize: 0.1, depthTest: false })
+            : new THREE.LineBasicMaterial({ color: '#ffbd63', depthTest: false })
+          const line = new THREE.Line(geometry, previewMaterial)
+          if (constructionMode) line.computeLineDistances()
+          line.renderOrder = 12
+          viewer.sketch.add(line)
+        }
+        const cursor = new THREE.Mesh(new THREE.SphereGeometry(0.09, 12, 8), new THREE.MeshBasicMaterial({ color: '#ffbd63', depthTest: false }))
+        cursor.position.copy(frame.origin).addScaledVector(frame.uAxis, sketchCursorPoint[0]).addScaledVector(frame.vAxis, sketchCursorPoint[1]).addScaledVector(frame.normal, 0.03)
+        cursor.renderOrder = 13
+        viewer.sketch.add(cursor)
+      }
       pendingSketchPoints.forEach(([u, v]) => {
         const marker = new THREE.Mesh(new THREE.SphereGeometry(0.07, 10, 8), new THREE.MeshBasicMaterial({ color: '#ffbd63', depthTest: false }))
         marker.position.copy(frame.origin).addScaledVector(frame.uAxis, u).addScaledVector(frame.vAxis, v).addScaledVector(frame.normal, 0.025)
@@ -1746,7 +1831,12 @@ function App() {
         })
         const geometry = new THREE.BufferGeometry()
         geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
-        const line = new THREE.Line(geometry, new THREE.LineBasicMaterial({ color: sketchStage === 'drawing' ? (entity.id === selectedSketchEntityId ? '#ffc46a' : '#76e7a5') : '#ffad48', depthTest: false }))
+        const color = entity.isConstruction ? '#f5a84e' : sketchStage === 'drawing' ? (entity.id === selectedSketchEntityId ? '#ffc46a' : '#76e7a5') : '#ffad48'
+        const material = entity.isConstruction
+          ? new THREE.LineDashedMaterial({ color, dashSize: 0.18, gapSize: 0.1, depthTest: false })
+          : new THREE.LineBasicMaterial({ color, depthTest: false })
+        const line = new THREE.Line(geometry, material)
+        if (entity.isConstruction) line.computeLineDistances()
         line.renderOrder = 10
         viewer.sketch.add(line)
       })
@@ -1762,7 +1852,7 @@ function App() {
       })
       viewer.sketch.clear()
     }
-  }, [activeArbitraryPlane, parts, pendingSketchPoints, selectedSketchEntityId, selectedSketchId, sketchEntities, sketchPlane, sketchStage, sketches])
+  }, [activeArbitraryPlane, constructionMode, parts, pendingSketchPoints, selectedSketchEntityId, selectedSketchId, sketchCursorPoint, sketchEntities, sketchPlane, sketchStage, sketchType, sketches])
 
   useEffect(() => {
     if (sketchStage !== 'drawing') return
@@ -1785,6 +1875,7 @@ function App() {
       const localPoint = getLocalPoint(event)
       if (!localPoint) return
       event.preventDefault()
+      const snappedPoint = snapSketchPoint(localPoint, event.shiftKey)
       if (sketchType === 'dimension') addDimensionPoint(localPoint)
       else if (sketchType === 'select') {
         const candidate = sketchEntities
@@ -1814,11 +1905,19 @@ function App() {
         }
         window.addEventListener('pointerup', handlePointerUp)
       }
-      else addSketchPoint(localPoint)
+      else addSketchPoint(snappedPoint)
+    }
+    const handlePointerMove = (event: PointerEvent) => {
+      const point = getLocalPoint(event)
+      setSketchCursorPoint(point ? snapSketchPoint(point, event.shiftKey) : null)
     }
     host.addEventListener('pointerdown', handlePointerDown)
-    return () => host.removeEventListener('pointerdown', handlePointerDown)
-  }, [activeArbitraryPlane, addDimensionPoint, addSketchPoint, dimensionPointRefs, notify, pendingSketchPoints, sketchConstraints, sketchEntities, sketchPlane, sketchStage, sketchType])
+    host.addEventListener('pointermove', handlePointerMove)
+    return () => {
+      host.removeEventListener('pointerdown', handlePointerDown)
+      host.removeEventListener('pointermove', handlePointerMove)
+    }
+  }, [activeArbitraryPlane, addDimensionPoint, addSketchPoint, dimensionPointRefs, notify, pendingSketchPoints, sketchConstraints, sketchEntities, sketchPlane, sketchSnapEnabled, sketchStage, sketchType, snapSketchPoint])
 
   useEffect(() => {
     const viewer = viewerRef.current
@@ -2244,13 +2343,19 @@ function App() {
 
           <div className="solid-ribbon-tools">
             <span style={{ fontSize: 10, color: '#9ab99a' }}>DRAW:</span>
-            {(['select', 'line', 'rectangle', 'circle', 'arc', 'dimension'] as SketchTool[]).map((tool) => (
+            {(['select', 'line', 'polyline', 'rectangle', 'circle', 'arc', 'dimension'] as SketchTool[]).map((tool) => (
               <button key={tool} onClick={() => chooseSketchTool(tool)} style={{ color: sketchType === tool ? '#8be2a5' : '#c1cad5', borderBottom: sketchType === tool ? '2px solid #70c887' : '2px solid transparent' }}>
-                {tool === 'rectangle' ? <Square size={14} /> : tool === 'circle' ? <Circle size={14} /> : tool === 'line' ? <Ruler size={14} /> : tool === 'arc' ? <Rotate3D size={14} /> : <Search size={14} />}
+                {tool === 'rectangle' ? <Square size={14} /> : tool === 'circle' ? <Circle size={14} /> : tool === 'line' || tool === 'polyline' ? <Ruler size={14} /> : tool === 'arc' ? <Rotate3D size={14} /> : tool === 'select' ? <Move3D size={14} /> : <Search size={14} />}
                 <span>{tool[0].toUpperCase() + tool.slice(1)}</span>
               </button>
             ))}
-            <span style={{ fontSize: 10, color: '#8b9b8b', padding: '0 6px' }}>{sketchType === 'select' ? 'Click an entity to select · drag to move' : sketchType === 'line' ? 'Click two endpoints' : sketchType === 'arc' ? 'Click center, start, end' : sketchType === 'circle' ? 'Click center, then radius' : sketchType === 'dimension' ? 'Click two points to constrain their distance' : 'Click two corners'}</span>
+            <button className="subtle-button" onClick={toggleSelectedConstruction} title={selectedSketchEntityId ? 'Toggle construction on the selected entity' : 'Draw new entities as construction geometry'}>
+              {selectedSketchEntityId ? (sketchEntities.find((entity) => entity.id === selectedSketchEntityId)?.isConstruction ? 'Make profile' : 'Make construction') : `Construction: ${constructionMode ? 'on' : 'off'}`}
+            </button>
+            <button className="subtle-button" onClick={() => setSketchSnapEnabled((enabled) => !enabled)} title="Snap to 0.5 mm grid and nearby sketch points">
+              {sketchSnapEnabled ? 'Snap 0.5 mm: on' : 'Snap: off'}
+            </button>
+            <span style={{ fontSize: 10, color: '#8b9b8b', padding: '0 6px' }}>{sketchType === 'select' ? 'Click an entity to select · drag to move' : sketchType === 'line' ? 'Click two endpoints' : sketchType === 'polyline' ? 'Click points · click start to close · Enter to finish' : sketchType === 'arc' ? 'Click center, start, end' : sketchType === 'circle' ? 'Click center, then radius' : sketchType === 'dimension' ? 'Click two points to constrain their distance' : 'Click two corners'}{sketchType !== 'select' && sketchType !== 'dimension' ? ' · Shift bypasses snap' : ''}</span>
             {sketchType === 'select' && selectedSketchEntityId && <button className="subtle-button" onClick={deleteSelectedSketchEntity}><Trash2 size={13} /> Delete entity</button>}
             {sketchType === 'dimension' && dimensionPointRefs.length === 2 && (
               <>
